@@ -1,0 +1,131 @@
+import { contextBridge, ipcRenderer } from "electron";
+
+type ProviderId = "claude-code" | "codex";
+
+interface StreamTurnArgs {
+  providerId: ProviderId;
+  prompt: string;
+  taskId?: string;
+  workspaceId?: string;
+  cwd?: string;
+  runtimeOptions?: {
+    debug?: boolean;
+    providerTimeoutMs?: number;
+    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
+    claudeAllowDangerouslySkipPermissions?: boolean;
+    claudeSandboxEnabled?: boolean;
+    claudeAllowUnsandboxedCommands?: boolean;
+    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+    codexNetworkAccessEnabled?: boolean;
+    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+    codexPathOverride?: string;
+    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+  };
+}
+
+interface TerminalRunArgs {
+  command: string;
+  cwd?: string;
+}
+
+interface ScmCommitArgs {
+  message: string;
+  cwd?: string;
+}
+
+interface StreamEventPayload {
+  streamId: string;
+  event: unknown;
+  sequence: number;
+  done: boolean;
+  taskId: string | null;
+  workspaceId: string | null;
+  providerId: ProviderId;
+  turnId: string | null;
+}
+
+const streamEventSubscribers = new Set<(payload: StreamEventPayload) => void>();
+ipcRenderer.on("provider:stream-event", (_event, payload: StreamEventPayload) => {
+  for (const subscriber of streamEventSubscribers) {
+    subscriber(payload);
+  }
+});
+
+contextBridge.exposeInMainWorld("api", {
+  provider: {
+    streamTurn: (args: StreamTurnArgs) => ipcRenderer.invoke("provider:stream-turn", args),
+    startStreamTurn: (args: StreamTurnArgs) => ipcRenderer.invoke("provider:start-stream-turn", args),
+    startPushTurn: (args: StreamTurnArgs) => ipcRenderer.invoke("provider:start-push-turn", args),
+    readStreamTurn: (args: { streamId: string; cursor: number }) => ipcRenderer.invoke("provider:read-stream-turn", args),
+    subscribeStreamEvents: (listener: (payload: StreamEventPayload) => void) => {
+      streamEventSubscribers.add(listener);
+      return () => {
+        streamEventSubscribers.delete(listener);
+      };
+    },
+    abortTurn: (args: { providerId: ProviderId }) => ipcRenderer.invoke("provider:abort-turn", args),
+    respondApproval: (args: { providerId: ProviderId; requestId: string; approved: boolean }) =>
+      ipcRenderer.invoke("provider:respond-approval", args),
+    respondUserInput: (args: {
+      providerId: ProviderId;
+      requestId: string;
+      answers?: Record<string, string>;
+      denied?: boolean;
+    }) => ipcRenderer.invoke("provider:respond-user-input", args),
+    checkAvailability: (args: { providerId: ProviderId }) =>
+      ipcRenderer.invoke("provider:check-availability", args),
+  },
+  persistence: {
+    listWorkspaces: () => ipcRenderer.invoke("persistence:list-workspaces"),
+    loadWorkspace: (args: { workspaceId: string }) => ipcRenderer.invoke("persistence:load-workspace", args),
+    upsertWorkspace: (args: { id: string; name: string; snapshot: unknown }) => ipcRenderer.invoke("persistence:upsert-workspace", args),
+    upsertWorkspaceSync: (args: { id: string; name: string; snapshot: unknown }) => ipcRenderer.sendSync("persistence:upsert-workspace-sync", args),
+    deleteWorkspace: (args: { workspaceId: string }) => ipcRenderer.invoke("persistence:delete-workspace", args),
+    listTurnEvents: (args: { turnId: string; afterSequence?: number; limit?: number }) =>
+      ipcRenderer.invoke("persistence:list-turn-events", args),
+  },
+  fs: {
+    pickRoot: () => ipcRenderer.invoke("fs:pick-root"),
+    listFiles: (args: { rootPath: string }) => ipcRenderer.invoke("fs:list-files", args),
+    readFile: (args: { rootPath: string; filePath: string }) => ipcRenderer.invoke("fs:read-file", args),
+    readFileDataUrl: (args: { rootPath: string; filePath: string }) => ipcRenderer.invoke("fs:read-file-data-url", args),
+    writeFile: (args: { rootPath: string; filePath: string; content: string; expectedRevision?: string | null }) =>
+      ipcRenderer.invoke("fs:write-file", args),
+    readTypeDefs: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-type-defs", args),
+    readSourceFiles: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-source-files", args),
+  },
+  terminal: {
+    runCommand: (args: TerminalRunArgs) => ipcRenderer.invoke("terminal:run-command", args),
+    createSession: (args: { cwd?: string; shell?: string; cols?: number; rows?: number }) => ipcRenderer.invoke("terminal:create-session", args),
+    writeSession: (args: { sessionId: string; input: string }) => ipcRenderer.invoke("terminal:write-session", args),
+    readSession: (args: { sessionId: string }) => ipcRenderer.invoke("terminal:read-session", args),
+    resizeSession: (args: { sessionId: string; cols: number; rows: number }) => ipcRenderer.invoke("terminal:resize-session", args),
+    closeSession: (args: { sessionId: string }) => ipcRenderer.invoke("terminal:close-session", args),
+  },
+  sourceControl: {
+    getStatus: (args: { cwd?: string }) => ipcRenderer.invoke("scm:status", args),
+    stageAll: (args: { cwd?: string }) => ipcRenderer.invoke("scm:stage-all", args),
+    unstageAll: (args: { cwd?: string }) => ipcRenderer.invoke("scm:unstage-all", args),
+    commit: (args: ScmCommitArgs) => ipcRenderer.invoke("scm:commit", args),
+    stageFile: (args: { path: string; cwd?: string }) => ipcRenderer.invoke("scm:stage-file", args),
+    unstageFile: (args: { path: string; cwd?: string }) => ipcRenderer.invoke("scm:unstage-file", args),
+    discardFile: (args: { path: string; cwd?: string }) => ipcRenderer.invoke("scm:discard-file", args),
+    getDiff: (args: { path: string; cwd?: string }) => ipcRenderer.invoke("scm:diff", args),
+    getHistory: (args: { cwd?: string; limit?: number }) => ipcRenderer.invoke("scm:history", args),
+    listBranches: (args: { cwd?: string }) => ipcRenderer.invoke("scm:list-branches", args),
+    createBranch: (args: { name: string; cwd?: string; from?: string }) => ipcRenderer.invoke("scm:create-branch", args),
+    checkoutBranch: (args: { name: string; cwd?: string }) => ipcRenderer.invoke("scm:checkout-branch", args),
+    mergeBranch: (args: { branch: string; cwd?: string }) => ipcRenderer.invoke("scm:merge-branch", args),
+    rebaseBranch: (args: { branch: string; cwd?: string }) => ipcRenderer.invoke("scm:rebase-branch", args),
+    cherryPick: (args: { commit: string; cwd?: string }) => ipcRenderer.invoke("scm:cherry-pick", args),
+  },
+  window: {
+    minimize: () => ipcRenderer.invoke("window:minimize"),
+    toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
+    close: () => ipcRenderer.invoke("window:close"),
+    isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+  },
+  shell: {
+    openExternal: (args: { url: string }) => ipcRenderer.invoke("shell:open-external", args),
+  },
+});

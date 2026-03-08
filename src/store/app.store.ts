@@ -1,0 +1,2635 @@
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { workspaceFsAdapter } from "@/lib/fs";
+import { getProviderAdapter } from "@/lib/providers";
+import {
+  listWorkspaceSummaries,
+  loadWorkspaceSnapshot,
+  upsertWorkspace,
+  deleteWorkspacePersistence,
+  type WorkspaceSummary,
+} from "@/lib/db/workspaces.db";
+import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
+import type { NormalizedProviderEvent, ProviderId, ProviderTurnRequest } from "@/lib/providers/provider.types";
+import { handleCommand } from "@/lib/commands";
+import { getArchiveFallbackTaskId, isTaskArchived } from "@/lib/tasks";
+import type {
+  ApprovalPart,
+  ChatMessage,
+  CodeDiffPart,
+  EditorTab,
+  FileContextPart,
+  MessagePart,
+  Task,
+  TextPart,
+  ThinkingPart,
+  ToolUsePart,
+  UserInputPart,
+} from "@/types/chat";
+
+interface LayoutState {
+  taskListWidth: number;
+  taskListCollapsed: boolean;
+  editorPanelWidth: number;
+  explorerPanelWidth: number;
+  terminalDockHeight: number;
+  editorVisible: boolean;
+  sidebarOverlayVisible: boolean;
+  terminalDocked: boolean;
+  editorDiffMode: boolean;
+}
+
+export const THEME_TOKEN_NAMES = [
+  "background",
+  "foreground",
+  "card",
+  "card-foreground",
+  "popover",
+  "popover-foreground",
+  "primary",
+  "primary-foreground",
+  "secondary",
+  "secondary-foreground",
+  "muted",
+  "muted-foreground",
+  "accent",
+  "accent-foreground",
+  "destructive",
+  "border",
+  "input",
+  "ring",
+  "sidebar",
+  "sidebar-foreground",
+  "sidebar-primary",
+  "sidebar-primary-foreground",
+  "sidebar-accent",
+  "sidebar-accent-foreground",
+  "sidebar-border",
+  "sidebar-ring",
+] as const;
+
+export type ThemeTokenName = (typeof THEME_TOKEN_NAMES)[number];
+export type ThemeModeName = "light" | "dark";
+export type ThemeTokenValues = Record<ThemeTokenName, string>;
+export type ThemeOverrideValues = Partial<Record<ThemeTokenName, string>>;
+
+export const PRESET_THEME_TOKENS: Record<ThemeModeName, ThemeTokenValues> = {
+  light: {
+    background: "oklch(1 0 0)",
+    foreground: "oklch(0.145 0 0)",
+    card: "oklch(1 0 0)",
+    "card-foreground": "oklch(0.145 0 0)",
+    popover: "oklch(1 0 0)",
+    "popover-foreground": "oklch(0.145 0 0)",
+    primary: "oklch(0.205 0 0)",
+    "primary-foreground": "oklch(0.985 0 0)",
+    secondary: "oklch(0.97 0 0)",
+    "secondary-foreground": "oklch(0.205 0 0)",
+    muted: "oklch(0.97 0 0)",
+    "muted-foreground": "oklch(0.556 0 0)",
+    accent: "oklch(0.205 0 0)",
+    "accent-foreground": "oklch(0.985 0 0)",
+    destructive: "oklch(0.58 0.22 27)",
+    border: "oklch(0.922 0 0)",
+    input: "oklch(0.922 0 0)",
+    ring: "oklch(0.708 0 0)",
+    sidebar: "oklch(0.985 0 0)",
+    "sidebar-foreground": "oklch(0.145 0 0)",
+    "sidebar-primary": "oklch(0.205 0 0)",
+    "sidebar-primary-foreground": "oklch(0.985 0 0)",
+    "sidebar-accent": "oklch(0.97 0 0)",
+    "sidebar-accent-foreground": "oklch(0.205 0 0)",
+    "sidebar-border": "oklch(0.922 0 0)",
+    "sidebar-ring": "oklch(0.708 0 0)",
+  },
+  dark: {
+    background: "oklch(0.145 0 0)",
+    foreground: "oklch(0.985 0 0)",
+    card: "oklch(0.205 0 0)",
+    "card-foreground": "oklch(0.985 0 0)",
+    popover: "oklch(0.205 0 0)",
+    "popover-foreground": "oklch(0.985 0 0)",
+    primary: "oklch(0.87 0 0)",
+    "primary-foreground": "oklch(0.205 0 0)",
+    secondary: "oklch(0.269 0 0)",
+    "secondary-foreground": "oklch(0.985 0 0)",
+    muted: "oklch(0.269 0 0)",
+    "muted-foreground": "oklch(0.708 0 0)",
+    accent: "oklch(0.87 0 0)",
+    "accent-foreground": "oklch(0.205 0 0)",
+    destructive: "oklch(0.704 0.191 22.216)",
+    border: "oklch(1 0 0 / 10%)",
+    input: "oklch(1 0 0 / 15%)",
+    ring: "oklch(0.556 0 0)",
+    sidebar: "oklch(0.205 0 0)",
+    "sidebar-foreground": "oklch(0.985 0 0)",
+    "sidebar-primary": "oklch(0.488 0.243 264.376)",
+    "sidebar-primary-foreground": "oklch(0.985 0 0)",
+    "sidebar-accent": "oklch(0.269 0 0)",
+    "sidebar-accent-foreground": "oklch(0.985 0 0)",
+    "sidebar-border": "oklch(1 0 0 / 10%)",
+    "sidebar-ring": "oklch(0.556 0 0)",
+  },
+};
+
+export interface AppSettings {
+  themeMode: "light" | "dark" | "system";
+  themeOverrides: Record<ThemeModeName, ThemeOverrideValues>;
+  language: string;
+  updateMode: "auto" | "manual";
+  httpProxy: string;
+  smartSuggestions: boolean;
+  chatSendPreview: boolean;
+  chatStreamingEnabled: boolean;
+  modelClaude: string;
+  modelCodex: string;
+  rulesPresetPrimary: string;
+  rulesPresetSecondary: string;
+  permissionMode: "require-approval" | "auto-safe";
+  subagentsEnabled: boolean;
+  subagentsProfile: string;
+  skillsEnabled: boolean;
+  skillsAutoSuggest: boolean;
+  commandPolicy: "confirm" | "auto-safe";
+  commandAllowlist: string;
+  customCommands: string;
+  reviewStrictMode: boolean;
+  reviewChecklistPreset: string;
+  terminalFontSize: number;
+  terminalFontFamily: string;
+  terminalCursorStyle: "block" | "bar" | "underline";
+  terminalLineHeight: number;
+  editorFontSize: number;
+  editorFontFamily: string;
+  editorWordWrap: boolean;
+  editorMinimap: boolean;
+  editorLineNumbers: "on" | "off" | "relative";
+  editorTabSize: number;
+  diffViewMode: "unified" | "split";
+  providerDebugStream: boolean;
+  providerTimeoutMs: number;
+  claudePermissionMode: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
+  claudeAllowDangerouslySkipPermissions: boolean;
+  claudeSandboxEnabled: boolean;
+  claudeAllowUnsandboxedCommands: boolean;
+  codexSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  codexNetworkAccessEnabled: boolean;
+  codexApprovalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+  codexPathOverride: string;
+  codexModelReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
+  codexPlanMode: boolean;
+}
+
+interface AppState {
+  workspaces: WorkspaceSummary[];
+  activeWorkspaceId: string;
+  projectPath: string | null;
+  defaultBranch: string;
+  workspaceBranchById: Record<string, string>;
+  workspacePathById: Record<string, string>;
+  workspaceDefaultById: Record<string, boolean>;
+  isDarkMode: boolean;
+  activeTaskId: string;
+  draftProvider: ProviderId;
+  promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+  tasks: Task[];
+  messagesByTask: Record<string, ChatMessage[]>;
+  layout: LayoutState;
+  settings: AppSettings;
+  editorTabs: EditorTab[];
+  activeEditorTabId: string | null;
+  workspaceRootName: string | null;
+  projectFiles: string[];
+  taskCheckpointById: Record<string, string>;
+  providerAvailability: Record<ProviderId, boolean>;
+  activeTurnIdsByTask: Record<string, string | undefined>;
+  hydrateWorkspaces: () => Promise<void>;
+  flushActiveWorkspaceSnapshot: (args?: { sync?: boolean }) => Promise<void>;
+  createProject: (args: { name?: string }) => Promise<void>;
+  createWorkspace: (args: { name: string; mode: "branch" | "clean"; fromBranch?: string }) => Promise<{ ok: boolean; message?: string }>;
+  deleteWorkspace: (args: { workspaceId: string }) => Promise<void>;
+  switchWorkspace: (args: { workspaceId: string }) => Promise<void>;
+  setDarkMode: (args: { enabled: boolean }) => void;
+  updateSettings: (args: { patch: Partial<AppSettings> }) => void;
+  selectTask: (args: { taskId: string }) => void;
+  clearTaskSelection: () => void;
+  updatePromptDraft: (args: { taskId: string; patch: Partial<{ text: string; attachedFilePath: string }> }) => void;
+  clearPromptDraft: (args: { taskId: string }) => void;
+  createTask: (args: { title?: string }) => void;
+  renameTask: (args: { taskId: string; title: string }) => void;
+  duplicateTask: (args: { taskId: string }) => void;
+  exportTask: (args: { taskId: string }) => void;
+  viewTaskChanges: (args: { taskId: string }) => Promise<void>;
+  rollbackTask: (args: { taskId: string }) => Promise<void>;
+  archiveTask: (args: { taskId: string }) => void;
+  setTaskProvider: (args: { taskId: string; provider: ProviderId }) => void;
+  setWorkspaceBranch: (args: { workspaceId: string; branch: string }) => void;
+  setLayout: (args: { patch: Partial<LayoutState> }) => void;
+  toggleEditorDiffMode: () => void;
+  openWorkspacePicker: () => Promise<void>;
+  refreshProjectFiles: () => Promise<void>;
+  refreshProviderAvailability: () => Promise<void>;
+  sendUserMessage: (args: {
+    taskId: string;
+    content: string;
+    fileContext?: {
+      filePath: string;
+      content: string;
+      language: string;
+      instruction?: string;
+    };
+  }) => void;
+  abortTaskTurn: (args: { taskId: string }) => void;
+  resolveApproval: (args: { taskId: string; messageId: string; approved: boolean }) => void;
+  resolveUserInput: (args: {
+    taskId: string;
+    messageId: string;
+    answers?: Record<string, string>;
+    denied?: boolean;
+  }) => void;
+  resolveDiff: (args: { taskId: string; messageId: string; accepted: boolean }) => void;
+  openDiffInEditor: (args: { messageId: string; filePath: string; oldContent: string; newContent: string }) => void;
+  openFileFromTree: (args: { filePath: string }) => Promise<void>;
+  setActiveEditorTab: (args: { tabId: string }) => void;
+  reorderEditorTabs: (args: { fromTabId: string; toTabId: string }) => void;
+  closeEditorTab: (args: { tabId: string }) => void;
+  updateEditorContent: (args: { tabId: string; content: string }) => void;
+  saveActiveEditorTab: () => Promise<{ ok: boolean; conflict?: boolean }>;
+  checkOpenTabConflicts: () => Promise<void>;
+  sendEditorContextToChat: (args: { taskId: string; instruction?: string }) => void;
+}
+
+const starterWorkspaceId = "base";
+const defaultWorkspaceName = "Default Workspace";
+
+const defaultSettings: AppSettings = {
+  themeMode: "dark",
+  themeOverrides: {
+    light: {},
+    dark: {},
+  },
+  language: "English",
+  updateMode: "auto",
+  httpProxy: "",
+  smartSuggestions: true,
+  chatSendPreview: true,
+  chatStreamingEnabled: true,
+  modelClaude: "claude-sonnet-4-6",
+  modelCodex: "gpt-5.4",
+  rulesPresetPrimary: "typescript-best-practices",
+  rulesPresetSecondary: "no-target-brand-keyword",
+  permissionMode: "auto-safe",
+  subagentsEnabled: true,
+  subagentsProfile: "default",
+  skillsEnabled: true,
+  skillsAutoSuggest: true,
+  commandPolicy: "confirm",
+  commandAllowlist: "bun,git,rg",
+  customCommands: "/clear = @clear\n/meow = Meow from {provider} ({model})",
+  reviewStrictMode: true,
+  reviewChecklistPreset: "safety-first",
+  terminalFontSize: 12,
+  terminalFontFamily: "JetBrains Mono",
+  terminalCursorStyle: "block",
+  terminalLineHeight: 1,
+  editorFontSize: 14,
+  editorFontFamily: "JetBrains Mono, monospace",
+  editorWordWrap: true,
+  editorMinimap: false,
+  editorLineNumbers: "on" as const,
+  editorTabSize: 2,
+  diffViewMode: "unified",
+  providerDebugStream: false,
+  providerTimeoutMs: 300000,
+  claudePermissionMode: "bypassPermissions",
+  claudeAllowDangerouslySkipPermissions: true,
+  claudeSandboxEnabled: false,
+  claudeAllowUnsandboxedCommands: true,
+  codexSandboxMode: "workspace-write",
+  codexNetworkAccessEnabled: true,
+  codexApprovalPolicy: "on-request",
+  codexPathOverride: "",
+  codexModelReasoningEffort: "medium",
+  codexPlanMode: false,
+};
+
+const starterTasks: Task[] = [];
+
+const starterMessages: Record<string, ChatMessage[]> = {};
+
+function createEmptyWorkspaceState() {
+  return {
+    activeTaskId: "",
+    tasks: [] as Task[],
+    messagesByTask: {} as Record<string, ChatMessage[]>,
+    promptDraftByTask: {} as Record<string, { text: string; attachedFilePath: string }>,
+  };
+}
+
+function buildMessageId(args: { taskId: string; count: number }) {
+  return `${args.taskId}-m-${args.count + 1}`;
+}
+
+function buildRecentTimestamp() {
+  return "just now";
+}
+
+function sanitizeBranchName(args: { value: string }) {
+  return args.value
+    .trim()
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9._/-]+/g, "-")
+    .replaceAll(/-+/g, "-")
+    .replaceAll(/^\-|\-$/g, "");
+}
+
+function toWorkspaceFolderName(args: { branch: string }) {
+  return args.branch.replaceAll("/", "__");
+}
+
+function resolveLanguage(args: { filePath: string }) {
+  if (isImageFilePath({ filePath: args.filePath })) {
+    return "image";
+  }
+  const path = args.filePath.toLowerCase();
+  const ext = path.slice(path.lastIndexOf("."));
+  const extMap: Record<string, string> = {
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".json": "json",
+    ".jsonc": "json",
+    ".md": "markdown",
+    ".mdx": "markdown",
+    ".css": "css",
+    ".scss": "scss",
+    ".less": "less",
+    ".html": "html",
+    ".htm": "html",
+    ".xml": "xml",
+    ".svg": "xml",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "ini",
+    ".py": "python",
+    ".pyi": "python",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".cs": "csharp",
+    ".php": "php",
+    ".rb": "ruby",
+    ".swift": "swift",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".sh": "shell",
+    ".bash": "shell",
+    ".zsh": "shell",
+    ".fish": "shell",
+    ".ps1": "powershell",
+    ".sql": "sql",
+    ".graphql": "graphql",
+    ".gql": "graphql",
+    ".dockerfile": "dockerfile",
+    ".tf": "hcl",
+    ".lua": "lua",
+    ".r": "r",
+    ".dart": "dart",
+    ".vue": "html",
+    ".svelte": "html",
+  };
+  if (extMap[ext]) {
+    return extMap[ext];
+  }
+  const basename = path.split("/").at(-1) ?? "";
+  if (basename === "dockerfile" || basename.startsWith("dockerfile.")) {
+    return "dockerfile";
+  }
+  if (basename === "makefile" || basename === "gnumakefile") {
+    return "makefile";
+  }
+  return "plaintext";
+}
+
+function isImageFilePath(args: { filePath: string }) {
+  const value = args.filePath.toLowerCase();
+  return value.endsWith(".png")
+    || value.endsWith(".jpg")
+    || value.endsWith(".jpeg")
+    || value.endsWith(".gif")
+    || value.endsWith(".webp")
+    || value.endsWith(".svg")
+    || value.endsWith(".bmp")
+    || value.endsWith(".ico")
+    || value.endsWith(".avif");
+}
+
+function createUserTextPart(args: { text: string }): TextPart {
+  return {
+    type: "text",
+    text: args.text,
+  };
+}
+
+function createThinkingPart(args: { text: string; isStreaming: boolean }): ThinkingPart {
+  return {
+    type: "thinking",
+    text: args.text,
+    isStreaming: args.isStreaming,
+  };
+}
+
+function createToolPart(args: { toolUseId?: string; toolName: string; input: string; output?: string; state: ToolUsePart["state"] }): ToolUsePart {
+  return {
+    type: "tool_use",
+    toolUseId: args.toolUseId,
+    toolName: args.toolName,
+    input: args.input,
+    output: args.output,
+    state: args.state,
+  };
+}
+
+function createDiffPart(args: {
+  filePath: string;
+  oldContent: string;
+  newContent: string;
+  status: CodeDiffPart["status"];
+}): CodeDiffPart {
+  return {
+    type: "code_diff",
+    filePath: args.filePath,
+    oldContent: args.oldContent,
+    newContent: args.newContent,
+    status: args.status,
+  };
+}
+
+function createApprovalPart(args: { requestId: string; toolName: string; description: string }): ApprovalPart {
+  return {
+    type: "approval",
+    toolName: args.toolName,
+    requestId: args.requestId,
+    description: args.description,
+    state: "approval-requested",
+  };
+}
+
+function createUserInputPart(args: {
+  requestId: string;
+  toolName: string;
+  questions: UserInputPart["questions"];
+}): UserInputPart {
+  return {
+    type: "user_input",
+    requestId: args.requestId,
+    toolName: args.toolName,
+    questions: args.questions,
+    state: "input-requested",
+  };
+}
+
+function createFileContextPart(args: {
+  filePath: string;
+  content: string;
+  language: string;
+  instruction?: string;
+}): FileContextPart {
+  return {
+    type: "file_context",
+    filePath: args.filePath,
+    content: args.content,
+    language: args.language,
+    instruction: args.instruction,
+  };
+}
+
+function normalizeEventToPart(args: { event: NormalizedProviderEvent }): MessagePart | null {
+  const { event } = args;
+
+  switch (event.type) {
+    case "thinking":
+      return createThinkingPart({ text: event.text, isStreaming: event.isStreaming ?? false });
+    case "text":
+      return createUserTextPart({ text: event.text });
+    case "tool":
+      return createToolPart({
+        toolUseId: event.toolUseId,
+        toolName: event.toolName,
+        input: event.input,
+        output: event.output,
+        state: event.state,
+      });
+    case "diff":
+      return createDiffPart({
+        filePath: event.filePath,
+        oldContent: event.oldContent,
+        newContent: event.newContent,
+        status: event.status ?? "pending",
+      });
+    case "approval":
+      return createApprovalPart({
+        requestId: event.requestId,
+        toolName: event.toolName,
+        description: event.description,
+      });
+    case "user_input":
+      return createUserInputPart({
+        requestId: event.requestId,
+        toolName: event.toolName,
+        questions: event.questions,
+      });
+    case "system":
+      return {
+        type: "system_event",
+        content: event.content,
+      };
+    case "error":
+      return {
+        type: "system_event",
+        content: `[error] ${event.message}`,
+      };
+    case "tool_result":
+    case "plan_ready":
+    case "done":
+      return null;
+  }
+}
+
+function updateMessageById(args: {
+  messages: ChatMessage[];
+  messageId: string;
+  update: (message: ChatMessage) => ChatMessage;
+}) {
+  return args.messages.map((message) =>
+    message.id === args.messageId ? args.update(message) : message
+  );
+}
+
+function applyApprovalState(args: {
+  taskId: string;
+  messageId: string;
+  approved: boolean;
+}) {
+  useAppStore.setState((state) => {
+    const current = state.messagesByTask[args.taskId] ?? [];
+    return {
+      messagesByTask: {
+        ...state.messagesByTask,
+        [args.taskId]: updateMessageById({
+          messages: current,
+          messageId: args.messageId,
+          update: (message) => ({
+            ...message,
+            parts: message.parts.map((part) => {
+              if (part.type !== "approval") {
+                return part;
+              }
+              return {
+                ...part,
+                state: args.approved ? "approval-responded" : "output-denied",
+              };
+            }),
+          }),
+        }),
+      },
+    };
+  });
+}
+
+function applyUserInputState(args: {
+  taskId: string;
+  messageId: string;
+  answers?: Record<string, string>;
+  denied?: boolean;
+}) {
+  useAppStore.setState((state) => {
+    const current = state.messagesByTask[args.taskId] ?? [];
+    return {
+      messagesByTask: {
+        ...state.messagesByTask,
+        [args.taskId]: updateMessageById({
+          messages: current,
+          messageId: args.messageId,
+          update: (message) => ({
+            ...message,
+            parts: message.parts.map((part) => {
+              if (part.type !== "user_input") {
+                return part;
+              }
+              return {
+                ...part,
+                answers: args.answers,
+                state: args.denied ? "input-denied" : "input-responded",
+              };
+            }),
+          }),
+        }),
+      },
+    };
+  });
+}
+
+function appendProviderEventToAssistant(args: {
+  message: ChatMessage;
+  event: NormalizedProviderEvent;
+}): ChatMessage {
+  if (args.event.type === "tool_result") {
+    const { tool_use_id, output } = args.event;
+    const updatedParts = args.message.parts.map((p) => {
+      if (p.type === "tool_use" && p.toolUseId === tool_use_id) {
+        return { ...p, output, state: "output-available" as const };
+      }
+      return p;
+    });
+    return { ...args.message, parts: updatedParts };
+  }
+
+  if (args.event.type === "plan_ready") {
+    return {
+      ...args.message,
+      content: args.event.planText,
+      isPlanResponse: true,
+      planText: args.event.planText,
+    };
+  }
+
+  if (args.event.type === "done") {
+    const hasRenderableContent =
+      args.message.content.trim().length > 0
+      || args.message.parts.some(p =>
+          (p.type === "text" && p.text?.trim().length > 0) ||
+          (p.type === "system_event" && p.content?.trim().length > 0) ||
+          (p.type === "thinking" && p.text?.trim().length > 0)
+        )
+      || args.message.isPlanResponse === true;
+
+    if (!hasRenderableContent) {
+      return {
+        ...args.message,
+        content: "No response returned.",
+        isStreaming: false,
+        parts: [
+          ...args.message.parts,
+          { type: "system_event", content: "No response returned." },
+        ],
+      };
+    }
+
+    const finalizedParts = args.message.parts.map((p) => {
+      if (p.type === "tool_use" && (p.state === "input-available" || p.state === "input-streaming")) {
+        return { ...p, state: "output-available" as const };
+      }
+      return p;
+    });
+
+    const truncated = args.event.stop_reason === "max_tokens";
+
+    return {
+      ...args.message,
+      isStreaming: false,
+      parts: truncated
+        ? [...finalizedParts, { type: "system_event" as const, content: "Response was cut off because the output limit was reached." }]
+        : finalizedParts,
+    };
+  }
+
+  const part = normalizeEventToPart({ event: args.event });
+  if (!part) {
+    return args.message;
+  }
+
+  const nextParts = [...args.message.parts];
+  const lastPart = nextParts.at(-1);
+
+  if (part.type === "text" && lastPart?.type === "text") {
+    nextParts[nextParts.length - 1] = {
+      ...lastPart,
+      text: `${lastPart.text}${part.text}`,
+    };
+  } else if (part.type === "thinking" && lastPart?.type === "thinking") {
+    nextParts[nextParts.length - 1] = {
+      ...lastPart,
+      text: `${lastPart.text}${part.text}`,
+      isStreaming: part.isStreaming,
+    };
+  } else if (
+    part.type === "tool_use"
+    && part.toolName.trim().toLowerCase() === "todowrite"
+  ) {
+    // Replace the last TodoWrite part in-place so the list updates in-place
+    // rather than appending a duplicate card below.
+    let existingIdx = -1;
+    for (let index = nextParts.length - 1; index >= 0; index -= 1) {
+      const candidate = nextParts[index];
+      if (candidate?.type === "tool_use" && candidate.toolName.trim().toLowerCase() === "todowrite") {
+        existingIdx = index;
+        break;
+      }
+    }
+    if (existingIdx !== -1) {
+      nextParts[existingIdx] = part;
+    } else {
+      nextParts.push(part);
+    }
+  } else {
+    nextParts.push(part);
+  }
+
+  const textAdd = args.event.type === "text" ? args.event.text : "";
+
+  return {
+    ...args.message,
+    content: `${args.message.content}${textAdd}`,
+    parts: nextParts,
+    isStreaming: true,
+  };
+}
+
+function hasRenderableAssistantContent(args: { message: ChatMessage }) {
+  return (
+    args.message.content.trim().length > 0
+    || args.message.parts.length > 0
+  );
+}
+
+function createPlanAssistantMessage(args: {
+  taskId: string;
+  count: number;
+  provider: ProviderId;
+  planText: string;
+  isStreaming?: boolean;
+}): ChatMessage {
+  return {
+    id: buildMessageId({ taskId: args.taskId, count: args.count }),
+    role: "assistant",
+    model: args.provider,
+    providerId: args.provider,
+    content: args.planText,
+    isStreaming: args.isStreaming ?? true,
+    isPlanResponse: true,
+    planText: args.planText,
+    parts: [],
+  };
+}
+
+function messagePartToContextText(args: { part: MessagePart }) {
+  const { part } = args;
+  switch (part.type) {
+    case "text":
+      return part.text;
+    case "thinking":
+      return `[thinking] ${part.text}`;
+    case "tool_use":
+      return `[tool:${part.toolName}] input=${part.input}${part.output ? ` output=${part.output}` : ""}`;
+    case "code_diff":
+      return `[diff:${part.filePath}] status=${part.status}`;
+    case "file_context":
+      return `[file_context:${part.filePath}] ${part.instruction ?? ""}`.trim();
+    case "approval":
+      return `[approval:${part.toolName}] ${part.description} state=${part.state}`;
+    case "user_input":
+      return `[user_input:${part.toolName}] questions=${part.questions.length} state=${part.state}`;
+    case "system_event":
+      return `[system] ${part.content}`;
+  }
+}
+
+function toHistoryLine(args: { message: ChatMessage }) {
+  const primary = args.message.content.trim();
+  if (primary.length > 0) {
+    return `${args.message.role}: ${primary}`;
+  }
+  if (args.message.isPlanResponse && args.message.planText?.trim()) {
+    return `${args.message.role}: ${args.message.planText.trim()}`;
+  }
+  const partText = args.message.parts.map((part) => messagePartToContextText({ part })).join(" | ").trim();
+  return `${args.message.role}: ${partText}`;
+}
+
+function buildTaskContextPrompt(args: {
+  history: ChatMessage[];
+  userInput: string;
+  fileContext?: {
+    filePath: string;
+    content: string;
+    language: string;
+    instruction?: string;
+  };
+}) {
+  const maxHistoryChars = 12000;
+  const serializedHistory = args.history
+    .map((message) => toHistoryLine({ message }))
+    .join("\n")
+    .slice(-maxHistoryChars);
+
+  const sections = [
+    "[Task Shared Context]",
+    serializedHistory.length > 0 ? serializedHistory : "(no prior messages)",
+  ];
+
+  if (args.fileContext) {
+    sections.push(
+      "[Selected File Context]",
+      `file: ${args.fileContext.filePath}`,
+      `language: ${args.fileContext.language}`,
+      args.fileContext.instruction ? `instruction: ${args.fileContext.instruction}` : "instruction: (none)",
+      args.fileContext.content,
+    );
+  }
+
+  sections.push(
+    "[Current User Input]",
+    args.userInput,
+  );
+
+  return sections.join("\n\n");
+}
+
+function runProviderTurn(args: {
+  provider: ProviderId;
+  prompt: string;
+  taskId: string;
+  workspaceId?: string;
+  cwd?: string;
+  runtimeOptions?: ProviderTurnRequest["runtimeOptions"];
+  onEvent: (args: { event: NormalizedProviderEvent }) => void;
+}) {
+  const adapter = getProviderAdapter({ providerId: args.provider });
+
+  void (async () => {
+    try {
+      for await (const event of adapter.runTurn({
+        prompt: args.prompt,
+        taskId: args.taskId,
+        workspaceId: args.workspaceId,
+        cwd: args.cwd,
+        runtimeOptions: args.runtimeOptions,
+      })) {
+        args.onEvent({ event });
+      }
+    } catch (error) {
+      args.onEvent({
+        event: {
+          type: "system",
+          content: `Provider stream failed: ${String(error)}`,
+        },
+      });
+    } finally {
+      args.onEvent({ event: { type: "done" } });
+    }
+  })();
+}
+
+function applyThemeClass(args: { enabled: boolean }) {
+  if (typeof document === "undefined") {
+    return;
+  }
+  document.documentElement.classList.toggle("dark", args.enabled);
+}
+
+function buildThemeOverrideCss(args: { themeOverrides: AppSettings["themeOverrides"] }) {
+  const blocks: string[] = [];
+
+  for (const mode of ["light", "dark"] as const) {
+    const overrides = args.themeOverrides[mode];
+    const declarations = Object.entries(overrides)
+      .filter((entry): entry is [ThemeTokenName, string] => Boolean(entry[1]?.trim()))
+      .map(([token, value]) => `--${token}: ${value};`);
+
+    if (declarations.length === 0) {
+      continue;
+    }
+
+    const selector = mode === "light" ? ":root" : ".dark";
+    blocks.push(`${selector}{${declarations.join("")}}`);
+  }
+
+  return blocks.join("\n");
+}
+
+function applyThemeOverrides(args: { themeOverrides: AppSettings["themeOverrides"] }) {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const styleId = "stave-theme-overrides";
+  const css = buildThemeOverrideCss({ themeOverrides: args.themeOverrides });
+  let element = document.getElementById(styleId) as HTMLStyleElement | null;
+
+  if (!css) {
+    element?.remove();
+    return;
+  }
+
+  if (!element) {
+    element = document.createElement("style");
+    element.id = styleId;
+    document.head.appendChild(element);
+  }
+
+  element.textContent = css;
+}
+
+function resolveDarkModeForTheme(args: { themeMode: AppSettings["themeMode"]; fallback?: boolean }) {
+  if (args.themeMode === "dark") {
+    return true;
+  }
+  if (args.themeMode === "light") {
+    return false;
+  }
+  if (typeof window === "undefined") {
+    return args.fallback ?? true;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function createWorkspaceSnapshot(args: {
+  activeTaskId: string;
+  tasks: Task[];
+  messagesByTask: Record<string, ChatMessage[]>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+}) {
+  return {
+    activeTaskId: args.activeTaskId,
+    tasks: args.tasks,
+    messagesByTask: normalizeMessagesForSnapshot({ messagesByTask: args.messagesByTask }),
+    promptDraftByTask: args.promptDraftByTask,
+  };
+}
+
+async function persistWorkspaceSnapshot(args: {
+  workspaceId: string;
+  workspaceName: string;
+  activeTaskId: string;
+  tasks: Task[];
+  messagesByTask: Record<string, ChatMessage[]>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+}) {
+  await upsertWorkspace({
+    id: args.workspaceId,
+    name: args.workspaceName,
+    snapshot: createWorkspaceSnapshot({
+      activeTaskId: args.activeTaskId,
+      tasks: args.tasks,
+      messagesByTask: args.messagesByTask,
+      promptDraftByTask: args.promptDraftByTask,
+    }),
+  });
+}
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      workspaces: [],
+      activeWorkspaceId: "",
+      projectPath: null,
+      defaultBranch: "main",
+      workspaceBranchById: {},
+      workspacePathById: {},
+      workspaceDefaultById: {},
+      isDarkMode: true,
+      activeTaskId: "",
+      draftProvider: "claude-code",
+      promptDraftByTask: {},
+      tasks: starterTasks,
+      messagesByTask: starterMessages,
+      layout: {
+        taskListWidth: 185,
+        taskListCollapsed: false,
+        editorPanelWidth: 520,
+        explorerPanelWidth: 300,
+        terminalDockHeight: 210,
+        editorVisible: false,
+        sidebarOverlayVisible: false,
+        terminalDocked: false,
+        editorDiffMode: false,
+      },
+      settings: defaultSettings,
+      editorTabs: [],
+      activeEditorTabId: null,
+      workspaceRootName: null,
+      projectFiles: workspaceFsAdapter.getKnownFiles(),
+      taskCheckpointById: {},
+      providerAvailability: {
+        "claude-code": true,
+        codex: true,
+      },
+      activeTurnIdsByTask: {},
+      hydrateWorkspaces: async () => {
+        const initialRows = await listWorkspaceSummaries();
+        const stateBeforeHydrate = get();
+        const activeWorkspaceSummary = stateBeforeHydrate.workspaces.find((workspace) => workspace.id === stateBeforeHydrate.activeWorkspaceId);
+        if (activeWorkspaceSummary && stateBeforeHydrate.activeWorkspaceId) {
+          await upsertWorkspace({
+            id: activeWorkspaceSummary.id,
+            name: activeWorkspaceSummary.name,
+            snapshot: createWorkspaceSnapshot({
+              activeTaskId: stateBeforeHydrate.activeTaskId,
+              tasks: stateBeforeHydrate.tasks,
+              messagesByTask: stateBeforeHydrate.messagesByTask,
+              promptDraftByTask: stateBeforeHydrate.promptDraftByTask,
+            }),
+          });
+        }
+        if (initialRows.length === 0 && stateBeforeHydrate.projectPath) {
+          await upsertWorkspace({
+            id: starterWorkspaceId,
+            name: defaultWorkspaceName,
+            snapshot: createWorkspaceSnapshot({
+              activeTaskId: "",
+              tasks: [],
+              messagesByTask: {},
+              promptDraftByTask: {},
+            }),
+          });
+        }
+        let rows = initialRows.length === 0 && stateBeforeHydrate.projectPath
+          ? await listWorkspaceSummaries()
+          : initialRows;
+        const defaultWorkspaceId =
+          rows.find((workspace) => workspace.id === starterWorkspaceId)?.id
+          ?? rows.find((workspace) => workspace.name.toLowerCase() === defaultWorkspaceName.toLowerCase())?.id
+          ?? rows[0]?.id
+          ?? "";
+
+        // Worktree cleanup: remove DB workspaces whose git worktrees no longer exist
+        const runner = window.api?.terminal?.runCommand;
+        const projectPath = stateBeforeHydrate.projectPath;
+        if (runner && projectPath) {
+          await runner({ cwd: projectPath, command: "git worktree prune" });
+          const listResult = await runner({ cwd: projectPath, command: "git worktree list --porcelain" });
+          if (listResult.ok) {
+            const registeredPaths = new Set(
+              listResult.stdout
+                .split("\n")
+                .filter((line) => line.startsWith("worktree "))
+                .map((line) => line.slice("worktree ".length).trim()),
+            );
+            const staleIds: string[] = [];
+            for (const row of rows) {
+              if (row.id === defaultWorkspaceId) continue;
+              const wsPath = stateBeforeHydrate.workspacePathById[row.id]
+                ?? `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`;
+              if (!registeredPaths.has(wsPath)) {
+                staleIds.push(row.id);
+              }
+            }
+            for (const id of staleIds) {
+              await deleteWorkspacePersistence({ workspaceId: id });
+            }
+            if (staleIds.length > 0) {
+              rows = rows.filter((row) => !staleIds.includes(row.id));
+            }
+          }
+        }
+
+        const preferredWorkspaceId = rows[0]?.id ?? "";
+        const snapshot = preferredWorkspaceId
+          ? await loadWorkspaceSnapshot({ workspaceId: preferredWorkspaceId })
+          : null;
+        const empty = createEmptyWorkspaceState();
+
+        const preferredWorkspacePath = stateBeforeHydrate.workspacePathById[preferredWorkspaceId]
+          || (preferredWorkspaceId && projectPath ? projectPath : null);
+        if (preferredWorkspacePath) {
+          await workspaceFsAdapter.setRoot?.({
+            rootPath: preferredWorkspacePath,
+            rootName: stateBeforeHydrate.workspaceRootName ?? "project",
+          });
+        }
+
+        set((state) => {
+          const projectPath = state.projectPath;
+          const branchById: Record<string, string> = { ...state.workspaceBranchById };
+          const pathById: Record<string, string> = { ...state.workspacePathById };
+
+          for (const row of rows) {
+            const isDefault = row.id === defaultWorkspaceId;
+            if (!branchById[row.id]) {
+              branchById[row.id] = isDefault ? state.defaultBranch : row.name;
+            }
+            if (!pathById[row.id] && projectPath) {
+              pathById[row.id] = isDefault
+                ? projectPath
+                : `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`;
+            }
+          }
+
+          return {
+            workspaces: rows,
+            activeWorkspaceId: preferredWorkspaceId,
+            workspaceDefaultById: defaultWorkspaceId ? { [defaultWorkspaceId]: true } : {},
+            workspaceBranchById: branchById,
+            workspacePathById: pathById,
+            activeTaskId: snapshot?.activeTaskId ?? empty.activeTaskId,
+            tasks: snapshot?.tasks ?? empty.tasks,
+            messagesByTask: normalizeMessagesForSnapshot({
+              messagesByTask: snapshot?.messagesByTask ?? empty.messagesByTask,
+            }),
+            promptDraftByTask: snapshot?.promptDraftByTask ?? empty.promptDraftByTask,
+            activeTurnIdsByTask: {},
+          };
+        });
+      },
+      flushActiveWorkspaceSnapshot: async ({ sync } = {}) => {
+        const state = get();
+        const workspaceId = state.activeWorkspaceId;
+        const workspace = state.workspaces.find((item) => item.id === workspaceId);
+        if (!workspaceId || !workspace) {
+          return;
+        }
+
+        const snapshot = createWorkspaceSnapshot({
+          activeTaskId: state.activeTaskId,
+          tasks: state.tasks,
+          messagesByTask: state.messagesByTask,
+          promptDraftByTask: state.promptDraftByTask,
+        });
+
+        if (sync) {
+          const upsertSync = window.api?.persistence?.upsertWorkspaceSync;
+          if (upsertSync) {
+            upsertSync({
+              id: workspaceId,
+              name: workspace.name,
+              snapshot,
+            });
+            return;
+          }
+        }
+
+        await persistWorkspaceSnapshot({
+          workspaceId,
+          workspaceName: workspace.name,
+          activeTaskId: state.activeTaskId,
+          tasks: state.tasks,
+          messagesByTask: state.messagesByTask,
+          promptDraftByTask: state.promptDraftByTask,
+        });
+      },
+      createProject: async ({ name }) => {
+        const root = await workspaceFsAdapter.pickRoot();
+        if (!root || !root.rootPath) {
+          return;
+        }
+        const projectRootPath = root.rootPath;
+
+        await workspaceFsAdapter.setRoot?.({
+          rootPath: projectRootPath,
+          rootName: root.rootName,
+          files: root.files,
+        });
+
+        const terminalRun = window.api?.terminal?.runCommand;
+        let defaultBranch = "main";
+        if (terminalRun) {
+          const branchResult = await terminalRun({
+            cwd: projectRootPath,
+            command: "git symbolic-ref --short refs/remotes/origin/HEAD || git symbolic-ref --short HEAD || echo main",
+          });
+          const branchLine = (branchResult.stdout || "")
+            .split("\n")
+            .map((line) => line.trim())
+            .find((line) => line.length > 0);
+          if (branchLine) {
+            defaultBranch = branchLine.replace(/^origin\//, "");
+          }
+        }
+
+        const projectName = name?.trim() || root.rootName || "project";
+        const empty = createEmptyWorkspaceState();
+        await upsertWorkspace({
+          id: starterWorkspaceId,
+          name: defaultWorkspaceName,
+          snapshot: createWorkspaceSnapshot({
+            activeTaskId: empty.activeTaskId,
+            tasks: empty.tasks,
+            messagesByTask: empty.messagesByTask,
+            promptDraftByTask: empty.promptDraftByTask,
+          }),
+        });
+
+        set(() => ({
+          workspaces: [{ id: starterWorkspaceId, name: defaultWorkspaceName, updatedAt: new Date().toISOString() }],
+          activeWorkspaceId: starterWorkspaceId,
+          projectPath: projectRootPath,
+          defaultBranch,
+          workspaceBranchById: { [starterWorkspaceId]: defaultBranch },
+          workspacePathById: { [starterWorkspaceId]: projectRootPath },
+          workspaceDefaultById: { [starterWorkspaceId]: true },
+          activeTaskId: empty.activeTaskId,
+          tasks: empty.tasks,
+          messagesByTask: empty.messagesByTask,
+          promptDraftByTask: empty.promptDraftByTask,
+          workspaceRootName: projectName,
+          projectFiles: root.files,
+        }));
+      },
+      createWorkspace: async ({ name, mode, fromBranch }) => {
+        const trimmed = name.trim();
+        if (!trimmed) {
+          return { ok: false, message: "Workspace name is required." };
+        }
+
+        const current = get();
+        if (!current.projectPath) {
+          return { ok: false, message: "Open a project before creating a workspace." };
+        }
+        const hasActiveWorkspace = current.workspaces.some((workspace) => workspace.id === current.activeWorkspaceId);
+        if (hasActiveWorkspace && current.activeWorkspaceId) {
+          const currentName = current.workspaces.find((workspace) => workspace.id === current.activeWorkspaceId)?.name ?? defaultWorkspaceName;
+          await persistWorkspaceSnapshot({
+            workspaceId: current.activeWorkspaceId,
+            workspaceName: currentName,
+            activeTaskId: current.activeTaskId,
+            tasks: current.tasks,
+            messagesByTask: current.messagesByTask,
+            promptDraftByTask: current.promptDraftByTask,
+          });
+        }
+
+        const workspaceId = crypto.randomUUID();
+        const branchName = sanitizeBranchName({ value: trimmed });
+        if (!branchName) {
+          return { ok: false, message: "Workspace branch name is invalid." };
+        }
+        const baseBranch = (fromBranch?.trim() || current.defaultBranch || "main").replace(/^origin\//, "");
+        const workspacePath = `${current.projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: branchName })}`;
+        const runner = window.api?.terminal?.runCommand;
+        if (runner) {
+          await runner({
+            cwd: current.projectPath,
+            command: "mkdir -p .stave/workspaces",
+          });
+          const addResult = await runner({
+            cwd: current.projectPath,
+            command: mode === "clean"
+              ? `git worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(workspacePath)}`
+              : `git worktree add -b ${JSON.stringify(branchName)} ${JSON.stringify(workspacePath)} ${JSON.stringify(baseBranch)}`,
+          });
+          if (!addResult.ok) {
+            const fallbackResult = await runner({
+              cwd: current.projectPath,
+              command: `git worktree add ${JSON.stringify(workspacePath)} ${JSON.stringify(branchName)}`,
+            });
+            if (!fallbackResult.ok) {
+              return { ok: false, message: (fallbackResult.stderr || addResult.stderr || "Failed to create git worktree.").trim() };
+            }
+          }
+        }
+
+        const empty = createEmptyWorkspaceState();
+        const snapshot = createWorkspaceSnapshot({
+          activeTaskId: empty.activeTaskId,
+          tasks: empty.tasks,
+          messagesByTask: empty.messagesByTask,
+          promptDraftByTask: empty.promptDraftByTask,
+        });
+        await upsertWorkspace({
+          id: workspaceId,
+          name: branchName,
+          snapshot,
+        });
+
+        let files = current.projectFiles;
+        try {
+          await workspaceFsAdapter.setRoot?.({
+            rootPath: workspacePath,
+            rootName: branchName,
+          });
+          files = await workspaceFsAdapter.listFiles();
+        } catch {
+          // Worktree may be created successfully before filesystem bridge catches up.
+          // Keep workspace registration and use the existing file list as fallback.
+        }
+
+        set((state) => ({
+          workspaces: state.workspaces.some((workspace) => workspace.id === workspaceId)
+            ? state.workspaces
+            : [...state.workspaces, { id: workspaceId, name: branchName, updatedAt: new Date().toISOString() }],
+          activeWorkspaceId: workspaceId,
+          workspaceBranchById: {
+            ...state.workspaceBranchById,
+            [workspaceId]: branchName,
+          },
+          workspacePathById: {
+            ...state.workspacePathById,
+            [workspaceId]: workspacePath,
+          },
+          workspaceDefaultById: {
+            ...state.workspaceDefaultById,
+            [workspaceId]: false,
+          },
+          activeTaskId: snapshot.activeTaskId,
+          tasks: snapshot.tasks,
+          messagesByTask: snapshot.messagesByTask,
+          promptDraftByTask: snapshot.promptDraftByTask ?? {},
+          projectFiles: files,
+        }));
+        return { ok: true };
+      },
+      deleteWorkspace: async ({ workspaceId }) => {
+        const state = get();
+        const workspace = state.workspaces.find((item) => item.id === workspaceId);
+        const isProtectedDefault = state.workspaceDefaultById[workspaceId]
+          || workspaceId === starterWorkspaceId
+          || workspace?.name.toLowerCase() === defaultWorkspaceName.toLowerCase();
+        if (isProtectedDefault) {
+          return;
+        }
+        const workspacePath = state.workspacePathById[workspaceId];
+        const projectPath = state.projectPath;
+        const runner = window.api?.terminal?.runCommand;
+        if (runner && projectPath && workspacePath) {
+          await runner({
+            cwd: projectPath,
+            command: `git worktree remove --force ${JSON.stringify(workspacePath)}`,
+          });
+        }
+        await deleteWorkspacePersistence({ workspaceId });
+        const nextWorkspace = state.workspaces.find((item) => state.workspaceDefaultById[item.id]) ?? state.workspaces[0];
+        if (!nextWorkspace) {
+          const empty = createEmptyWorkspaceState();
+          set((nextState) => {
+            const nextBranchById = { ...nextState.workspaceBranchById };
+            const nextPathById = { ...nextState.workspacePathById };
+            const nextDefaultById = { ...nextState.workspaceDefaultById };
+            delete nextBranchById[workspaceId];
+            delete nextPathById[workspaceId];
+            delete nextDefaultById[workspaceId];
+            return {
+              workspaces: nextState.workspaces.filter((item) => item.id !== workspaceId),
+              workspaceBranchById: nextBranchById,
+              workspacePathById: nextPathById,
+              workspaceDefaultById: nextDefaultById,
+              activeWorkspaceId: "",
+              activeTaskId: empty.activeTaskId,
+              tasks: empty.tasks,
+              messagesByTask: empty.messagesByTask,
+            };
+          });
+          return;
+        }
+        await get().switchWorkspace({ workspaceId: nextWorkspace.id });
+        set((nextState) => {
+          const nextBranchById = { ...nextState.workspaceBranchById };
+          const nextPathById = { ...nextState.workspacePathById };
+          const nextDefaultById = { ...nextState.workspaceDefaultById };
+          delete nextBranchById[workspaceId];
+          delete nextPathById[workspaceId];
+          delete nextDefaultById[workspaceId];
+          return {
+            workspaces: nextState.workspaces.filter((item) => item.id !== workspaceId),
+            workspaceBranchById: nextBranchById,
+            workspacePathById: nextPathById,
+            workspaceDefaultById: nextDefaultById,
+          };
+        });
+      },
+      switchWorkspace: async ({ workspaceId }) => {
+        const current = get();
+        const hasActiveWorkspace = current.workspaces.some((workspace) => workspace.id === current.activeWorkspaceId);
+        if (hasActiveWorkspace && current.activeWorkspaceId) {
+          const currentName = current.workspaces.find((workspace) => workspace.id === current.activeWorkspaceId)?.name ?? defaultWorkspaceName;
+          await persistWorkspaceSnapshot({
+            workspaceId: current.activeWorkspaceId,
+            workspaceName: currentName,
+            activeTaskId: current.activeTaskId,
+            tasks: current.tasks,
+            messagesByTask: current.messagesByTask,
+            promptDraftByTask: current.promptDraftByTask,
+          });
+        }
+
+        const nextSnapshot = await loadWorkspaceSnapshot({ workspaceId });
+        const workspacePath = current.workspacePathById[workspaceId];
+        if (workspacePath) {
+          await workspaceFsAdapter.setRoot?.({
+            rootPath: workspacePath,
+            rootName: current.workspaceRootName ?? "project",
+          });
+        }
+        const files = await workspaceFsAdapter.listFiles();
+        const nextWorkspaces = current.workspaces;
+        const empty = createEmptyWorkspaceState();
+
+        set((state) => ({
+          workspaces: nextWorkspaces.length > 0 ? nextWorkspaces : state.workspaces,
+          activeWorkspaceId: workspaceId,
+          activeTaskId: nextSnapshot?.activeTaskId ?? empty.activeTaskId,
+          tasks: nextSnapshot?.tasks ?? empty.tasks,
+          messagesByTask: normalizeMessagesForSnapshot({
+            messagesByTask: nextSnapshot?.messagesByTask ?? empty.messagesByTask,
+          }),
+          activeTurnIdsByTask: {},
+          projectFiles: files,
+        }));
+      },
+      setDarkMode: ({ enabled }) => {
+        set((state) => ({
+          isDarkMode: enabled,
+          settings: {
+            ...state.settings,
+            themeMode: enabled ? "dark" : "light",
+          },
+        }));
+        applyThemeClass({ enabled });
+      },
+      updateSettings: ({ patch }) => {
+        set((state) => ({ settings: { ...state.settings, ...patch } }));
+
+        if (patch.themeOverrides) {
+          applyThemeOverrides({ themeOverrides: patch.themeOverrides });
+        }
+        if (patch.themeMode) {
+          const isDark = resolveDarkModeForTheme({ themeMode: patch.themeMode });
+          set(() => ({ isDarkMode: isDark }));
+          applyThemeClass({ enabled: isDark });
+        }
+      },
+      selectTask: ({ taskId }) => set(() => ({ activeTaskId: taskId })),
+      clearTaskSelection: () => set(() => ({ activeTaskId: "" })),
+      updatePromptDraft: ({ taskId, patch }) => {
+        set((state) => ({
+          promptDraftByTask: {
+            ...state.promptDraftByTask,
+            [taskId]: {
+              text: state.promptDraftByTask[taskId]?.text ?? "",
+              attachedFilePath: state.promptDraftByTask[taskId]?.attachedFilePath ?? "",
+              ...patch,
+            },
+          },
+        }));
+      },
+      clearPromptDraft: ({ taskId }) => {
+        set((state) => ({
+          promptDraftByTask: {
+            ...state.promptDraftByTask,
+            [taskId]: { text: "", attachedFilePath: "" },
+          },
+        }));
+      },
+      createTask: ({ title }) => {
+        const trimmed = (title ?? "").trim();
+        set((state) => {
+          const hasActiveWorkspace = state.workspaces.some((workspace) => workspace.id === state.activeWorkspaceId);
+          if (!hasActiveWorkspace || !state.activeWorkspaceId) {
+            return {};
+          }
+          const nextTask: Task = {
+            id: crypto.randomUUID(),
+            title: trimmed.length > 0 ? trimmed : "New Task",
+            provider: state.draftProvider,
+            updatedAt: "just now",
+            unread: false,
+            archivedAt: null,
+          };
+          return {
+            tasks: [nextTask, ...state.tasks],
+            activeTaskId: nextTask.id,
+            messagesByTask: {
+              ...state.messagesByTask,
+              [nextTask.id]: [],
+            },
+          };
+        });
+      },
+      renameTask: ({ taskId, title }) => {
+        const nextTitle = title.trim();
+        if (!nextTitle) {
+          return;
+        }
+        set((state) => ({
+          tasks: state.tasks.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  title: nextTitle,
+                  updatedAt: buildRecentTimestamp(),
+                }
+              : task
+          ),
+        }));
+      },
+      duplicateTask: ({ taskId }) => {
+        set((state) => {
+          const sourceTask = state.tasks.find((task) => task.id === taskId);
+          if (!sourceTask) {
+            return {};
+          }
+          const nextTaskId = crypto.randomUUID();
+          const sourceMessages = state.messagesByTask[taskId] ?? [];
+          const duplicatedMessages = sourceMessages.map((message) => ({
+            ...message,
+            id: crypto.randomUUID(),
+            isStreaming: false,
+          }));
+          const duplicatedTask: Task = {
+            ...sourceTask,
+            id: nextTaskId,
+            title: `${sourceTask.title} (copy)`,
+            updatedAt: buildRecentTimestamp(),
+            unread: false,
+            archivedAt: null,
+          };
+          return {
+            tasks: [duplicatedTask, ...state.tasks],
+            activeTaskId: duplicatedTask.id,
+            taskCheckpointById: {
+              ...state.taskCheckpointById,
+              [duplicatedTask.id]: state.taskCheckpointById[taskId] ?? "",
+            },
+            messagesByTask: {
+              ...state.messagesByTask,
+              [duplicatedTask.id]: duplicatedMessages,
+            },
+          };
+        });
+      },
+      exportTask: ({ taskId }) => {
+        if (typeof document === "undefined") {
+          return;
+        }
+        const state = get();
+        const task = state.tasks.find((item) => item.id === taskId);
+        if (!task) {
+          return;
+        }
+        const payload = {
+          exportedAt: new Date().toISOString(),
+          task,
+          messages: state.messagesByTask[taskId] ?? [],
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        const safeTitle = task.title.replaceAll(/[^a-z0-9-_]+/gi, "-").toLowerCase();
+        anchor.href = url;
+        anchor.download = `${safeTitle || "task"}-${taskId}.json`;
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      },
+      viewTaskChanges: async ({ taskId }) => {
+        const state = get();
+        const checkpoint = state.taskCheckpointById[taskId];
+        const workspaceCwd = state.workspacePathById[state.activeWorkspaceId] || state.projectPath || undefined;
+        const runCommand = window.api?.terminal?.runCommand;
+        if (!runCommand) {
+          return;
+        }
+
+        const command = checkpoint
+          ? `git diff --name-status ${JSON.stringify(checkpoint)} --`
+          : "git status --porcelain";
+        const result = await runCommand({ cwd: workspaceCwd, command });
+        const output = result.ok
+          ? (result.stdout.trim() || "No file changes for this task checkpoint.")
+          : (result.stderr.trim() || "Failed to load task changes.");
+
+        set((nextState) => {
+          const current = nextState.messagesByTask[taskId] ?? [];
+          const message: ChatMessage = {
+            id: buildMessageId({ taskId, count: current.length }),
+            role: "assistant",
+            model: "system",
+            providerId: "user",
+            content: output,
+            parts: [{
+              type: "system_event",
+              content: `Task changes\n${output}`,
+            }],
+          };
+          return {
+            messagesByTask: {
+              ...nextState.messagesByTask,
+              [taskId]: [...current, message],
+            },
+          };
+        });
+      },
+      rollbackTask: async ({ taskId }) => {
+        const state = get();
+        const checkpoint = state.taskCheckpointById[taskId];
+        const workspaceCwd = state.workspacePathById[state.activeWorkspaceId] || state.projectPath || undefined;
+        const runCommand = window.api?.terminal?.runCommand;
+        if (!runCommand || !checkpoint) {
+          return;
+        }
+
+        const rollbackResult = await runCommand({
+          cwd: workspaceCwd,
+          command: `git restore --source=${JSON.stringify(checkpoint)} --staged --worktree .`,
+        });
+
+        const output = rollbackResult.ok
+          ? `Rollback complete to checkpoint ${checkpoint}.`
+          : (rollbackResult.stderr.trim() || "Rollback failed.");
+
+        const files = await workspaceFsAdapter.listFiles();
+        set((nextState) => {
+          const current = nextState.messagesByTask[taskId] ?? [];
+          const message: ChatMessage = {
+            id: buildMessageId({ taskId, count: current.length }),
+            role: "assistant",
+            model: "system",
+            providerId: "user",
+            content: output,
+            parts: [{
+              type: "system_event",
+              content: output,
+            }],
+          };
+          return {
+            projectFiles: files,
+            messagesByTask: {
+              ...nextState.messagesByTask,
+              [taskId]: [...current, message],
+            },
+          };
+        });
+      },
+      archiveTask: ({ taskId }) => {
+        set((state) => {
+          const targetTask = state.tasks.find((task) => task.id === taskId);
+          if (!targetTask || isTaskArchived(targetTask)) {
+            return {};
+          }
+          const nextTasks = state.tasks.map((task) =>
+            task.id === taskId
+              ? {
+                  ...task,
+                  archivedAt: new Date().toISOString(),
+                  updatedAt: buildRecentTimestamp(),
+                  unread: false,
+                }
+              : task
+          );
+          const shouldSwitch = state.activeTaskId === taskId;
+          const fallbackTaskId = getArchiveFallbackTaskId({ tasks: state.tasks, archivedTaskId: taskId });
+          return {
+            tasks: nextTasks,
+            activeTaskId: shouldSwitch ? fallbackTaskId : state.activeTaskId,
+          };
+        });
+      },
+      setTaskProvider: ({ taskId, provider }) =>
+        set((state) => {
+          const hasTask = state.tasks.some((task) => task.id === taskId);
+          if (!hasTask) {
+            return { draftProvider: provider };
+          }
+          return {
+            tasks: state.tasks.map((task) =>
+              task.id === taskId
+                ? {
+                    ...task,
+                    provider,
+                  }
+                : task
+            ),
+            draftProvider: provider,
+          };
+        }),
+      setWorkspaceBranch: ({ workspaceId, branch }) =>
+        set((state) => ({
+          workspaceBranchById: {
+            ...state.workspaceBranchById,
+            [workspaceId]: branch,
+          },
+        })),
+      setLayout: ({ patch }) => set((state) => ({ layout: { ...state.layout, ...patch } })),
+      toggleEditorDiffMode: () =>
+        set((state) => ({
+          layout: {
+            ...state.layout,
+            editorDiffMode: !state.layout.editorDiffMode,
+          },
+        })),
+      openWorkspacePicker: async () => {
+        const root = await workspaceFsAdapter.pickRoot();
+        if (!root) {
+          return;
+        }
+        set((state) => ({
+          workspaceRootName: root.rootName,
+          projectFiles: root.files,
+          layout: {
+            ...state.layout,
+            editorVisible: true,
+          },
+        }));
+      },
+      refreshProjectFiles: async () => {
+        const files = await workspaceFsAdapter.listFiles();
+        set(() => ({ projectFiles: files }));
+      },
+      refreshProviderAvailability: async () => {
+        const checkAvailability = window.api?.provider?.checkAvailability;
+        if (!checkAvailability) {
+          return;
+        }
+        const [claudeCheck, codexCheck] = await Promise.all([
+          checkAvailability({ providerId: "claude-code" }),
+          checkAvailability({ providerId: "codex" }),
+        ]);
+
+        set(() => ({
+          providerAvailability: {
+            "claude-code": claudeCheck.ok && claudeCheck.available,
+            codex: codexCheck.ok && codexCheck.available,
+          },
+        }));
+      },
+      sendUserMessage: ({ taskId, content, fileContext }) => {
+        const turnId = crypto.randomUUID();
+        let state = get();
+        let resolvedTaskId = taskId;
+        let task = state.tasks.find((item) => item.id === resolvedTaskId);
+        if (!task) {
+          const seededTaskId = crypto.randomUUID();
+          const seededTitle = content.split("\n")[0]?.trim().slice(0, 48) || "New Task";
+          const seededTask: Task = {
+            id: seededTaskId,
+            title: seededTitle,
+            provider: state.draftProvider,
+            updatedAt: buildRecentTimestamp(),
+            unread: false,
+            archivedAt: null,
+          };
+          set((nextState) => ({
+            tasks: [seededTask, ...nextState.tasks],
+            activeTaskId: seededTaskId,
+            messagesByTask: {
+              ...nextState.messagesByTask,
+              [seededTaskId]: nextState.messagesByTask[seededTaskId] ?? [],
+            },
+          }));
+          state = get();
+          resolvedTaskId = seededTaskId;
+          task = seededTask;
+        }
+        const provider = task?.provider ?? state.draftProvider ?? "claude-code";
+        const workspaceCwd = state.workspacePathById[state.activeWorkspaceId] || state.projectPath || undefined;
+        const runCommand = window.api?.terminal?.runCommand;
+
+        if (!state.taskCheckpointById[resolvedTaskId] && runCommand) {
+          void runCommand({ cwd: workspaceCwd, command: "git rev-parse HEAD" }).then((result) => {
+            if (!result.ok) {
+              return;
+            }
+            const checkpoint = result.stdout.trim().split("\n")[0]?.trim();
+            if (!checkpoint) {
+              return;
+            }
+            set((nextState) => ({
+              taskCheckpointById: {
+                ...nextState.taskCheckpointById,
+                [resolvedTaskId]: checkpoint,
+              },
+            }));
+          });
+        }
+
+        const existingHistory = state.messagesByTask[resolvedTaskId] ?? [];
+
+        // ── Slash-command interception ────────────────────────────────────
+        // Check BEFORE building the prompt or touching the provider.
+        // Applies to both Claude and Codex — zero API calls for commands.
+        const activeModel = provider === "claude-code"
+          ? state.settings.modelClaude
+          : state.settings.modelCodex;
+
+        const commandResult = handleCommand(content, {
+          provider,
+          model: activeModel,
+          messages: existingHistory,
+          settings: state.settings,
+        });
+
+        if (commandResult.handled) {
+          const responseText = commandResult.response ?? "";
+          set((nextState) => {
+            const current = nextState.messagesByTask[resolvedTaskId] ?? [];
+            const userMessageId = buildMessageId({ taskId: resolvedTaskId, count: current.length });
+            const assistantMessageId = buildMessageId({ taskId: resolvedTaskId, count: current.length + 1 });
+
+            const userMessage: ChatMessage = {
+              id: userMessageId,
+              role: "user",
+              model: "user",
+              providerId: "user",
+              content,
+              parts: [createUserTextPart({ text: content })],
+            };
+
+            const assistantMessage: ChatMessage = {
+              id: assistantMessageId,
+              role: "assistant",
+              model: provider,
+              providerId: provider,
+              content: responseText,
+              isStreaming: false,
+              parts: responseText ? [createUserTextPart({ text: responseText })] : [],
+            };
+
+            // /clear wipes the task history; other commands append normally
+            const nextMessages = commandResult.action === "clear"
+              ? [userMessage, assistantMessage]
+              : [...current, userMessage, assistantMessage];
+
+            return {
+              tasks: nextState.tasks.map((taskItem) =>
+                taskItem.id === resolvedTaskId
+                  ? { ...taskItem, archivedAt: null, updatedAt: buildRecentTimestamp() }
+                  : taskItem
+              ),
+              messagesByTask: {
+                ...nextState.messagesByTask,
+                [resolvedTaskId]: nextMessages,
+              },
+              activeTurnIdsByTask: {
+                ...nextState.activeTurnIdsByTask,
+                [resolvedTaskId]: undefined,
+              },
+            };
+          });
+          return; // skip runProviderTurn entirely
+        }
+        // ── End slash-command interception ────────────────────────────────
+
+        const prompt = buildTaskContextPrompt({
+          history: existingHistory,
+          userInput: content,
+          fileContext,
+        });
+
+        set((nextState) => {
+          const current = nextState.messagesByTask[resolvedTaskId] ?? [];
+          const userMessageId = buildMessageId({ taskId: resolvedTaskId, count: current.length });
+          const userParts: MessagePart[] = [];
+          if (fileContext) {
+            userParts.push(createFileContextPart({
+              filePath: fileContext.filePath,
+              content: fileContext.content,
+              language: fileContext.language,
+              instruction: fileContext.instruction,
+            }));
+          }
+          if (content.trim().length > 0) {
+            userParts.push(createUserTextPart({ text: content }));
+          }
+
+          const userMessage: ChatMessage = {
+            id: userMessageId,
+            role: "user",
+            model: "user",
+            providerId: "user",
+            content,
+            parts: userParts.length > 0 ? userParts : [createUserTextPart({ text: content })],
+          };
+
+          const assistantMessageId = buildMessageId({ taskId: resolvedTaskId, count: current.length + 1 });
+          const assistantMessage: ChatMessage = {
+            id: assistantMessageId,
+            role: "assistant",
+            model: provider,
+            providerId: provider,
+            content: "",
+            isStreaming: true,
+            parts: [],
+          };
+
+          return {
+            tasks: nextState.tasks.map((taskItem) =>
+              taskItem.id === resolvedTaskId
+                ? {
+                    ...taskItem,
+                    archivedAt: null,
+                    updatedAt: buildRecentTimestamp(),
+                  }
+                : taskItem
+            ),
+            messagesByTask: {
+              ...nextState.messagesByTask,
+              [resolvedTaskId]: [...current, userMessage, assistantMessage],
+            },
+            activeTurnIdsByTask: {
+              ...nextState.activeTurnIdsByTask,
+              [resolvedTaskId]: turnId,
+            },
+          };
+        });
+
+        const queuedEvents: NormalizedProviderEvent[] = [];
+        let flushHandle: number | null = null;
+
+        const scheduleFlush = () => {
+          if (flushHandle !== null) {
+            return;
+          }
+          if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            flushHandle = window.requestAnimationFrame(() => {
+              flushHandle = null;
+              flushProviderEvents();
+            });
+            return;
+          }
+          flushHandle = window.setTimeout(() => {
+            flushHandle = null;
+            flushProviderEvents();
+          }, 16);
+        };
+
+        const cancelScheduledFlush = () => {
+          if (flushHandle === null) {
+            return;
+          }
+          if (typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+            window.cancelAnimationFrame(flushHandle);
+          } else {
+            window.clearTimeout(flushHandle);
+          }
+          flushHandle = null;
+        };
+
+        const flushProviderEvents = () => {
+          if (queuedEvents.length === 0) {
+            return;
+          }
+
+          const pendingEvents = queuedEvents.splice(0, queuedEvents.length);
+
+          set((nextState) => {
+            const activeTurnId = nextState.activeTurnIdsByTask[resolvedTaskId];
+            if (activeTurnId !== turnId) {
+              return {};
+            }
+
+            let current = nextState.messagesByTask[resolvedTaskId] ?? [];
+            let nextActiveTurnIds = nextState.activeTurnIdsByTask;
+            let changed = false;
+
+            for (const event of pendingEvents) {
+              const target = current[current.length - 1];
+              if (!target || target.role !== "assistant") {
+                break;
+              }
+
+              if (event.type === "plan_ready") {
+                const shouldAppendSeparatePlanMessage =
+                  !target.isPlanResponse
+                  && hasRenderableAssistantContent({ message: target });
+
+                if (shouldAppendSeparatePlanMessage) {
+                  const planMessage = createPlanAssistantMessage({
+                    taskId: resolvedTaskId,
+                    count: current.length,
+                    provider,
+                    planText: event.planText,
+                  });
+
+                  current = [...current, planMessage];
+                  changed = true;
+                  continue;
+                }
+              }
+
+              const updated = appendProviderEventToAssistant({
+                message: target,
+                event,
+              });
+
+              current = [...current.slice(0, -1), updated];
+              changed = true;
+
+              if (event.type === "done") {
+                nextActiveTurnIds = {
+                  ...nextActiveTurnIds,
+                  [resolvedTaskId]: undefined,
+                };
+              }
+            }
+
+            if (!changed) {
+              return {};
+            }
+
+            return {
+              messagesByTask: {
+                ...nextState.messagesByTask,
+                [resolvedTaskId]: current,
+              },
+              activeTurnIdsByTask: nextActiveTurnIds,
+            };
+          });
+        };
+
+        runProviderTurn({
+          provider,
+          prompt,
+          taskId: resolvedTaskId,
+          workspaceId: get().activeWorkspaceId,
+          cwd: get().workspacePathById[get().activeWorkspaceId] ?? get().projectPath ?? undefined,
+          runtimeOptions: {
+            chatStreamingEnabled: get().settings.chatStreamingEnabled,
+            debug: get().settings.providerDebugStream,
+            providerTimeoutMs: get().settings.providerTimeoutMs,
+            claudePermissionMode: get().settings.claudePermissionMode,
+            claudeAllowDangerouslySkipPermissions: get().settings.claudeAllowDangerouslySkipPermissions,
+            claudeSandboxEnabled: get().settings.claudeSandboxEnabled,
+            claudeAllowUnsandboxedCommands: get().settings.claudeAllowUnsandboxedCommands,
+            codexSandboxMode: get().settings.codexSandboxMode,
+            codexNetworkAccessEnabled: get().settings.codexNetworkAccessEnabled,
+            codexApprovalPolicy: get().settings.codexApprovalPolicy,
+            codexPathOverride: get().settings.codexPathOverride || undefined,
+            codexModelReasoningEffort: get().settings.codexModelReasoningEffort,
+            codexPlanMode: get().settings.codexPlanMode,
+          },
+          onEvent: ({ event }) => {
+            queuedEvents.push(event);
+            if (event.type === "done") {
+              cancelScheduledFlush();
+              flushProviderEvents();
+              return;
+            }
+            scheduleFlush();
+          },
+        });
+      },
+      abortTaskTurn: ({ taskId }) => {
+        const stateBefore = get();
+        const task = stateBefore.tasks.find((item) => item.id === taskId);
+        const providerId = task?.provider;
+        if (providerId) {
+          const abortTurn = window.api?.provider?.abortTurn;
+          if (abortTurn) {
+            void abortTurn({ providerId });
+          }
+        }
+
+        set((state) => {
+          const current = state.messagesByTask[taskId] ?? [];
+          const target = current[current.length - 1];
+          if (!target || target.role !== "assistant" || !target.isStreaming) {
+            return {
+              activeTurnIdsByTask: {
+                ...state.activeTurnIdsByTask,
+                [taskId]: undefined,
+              },
+            };
+          }
+
+          const aborted: ChatMessage = {
+            ...target,
+            isStreaming: false,
+            parts: [
+              ...target.parts,
+              { type: "system_event", content: "Generation aborted by user." },
+            ],
+          };
+
+          return {
+            messagesByTask: {
+              ...state.messagesByTask,
+              [taskId]: [...current.slice(0, -1), aborted],
+            },
+            activeTurnIdsByTask: {
+              ...state.activeTurnIdsByTask,
+              [taskId]: undefined,
+            },
+          };
+        });
+      },
+      resolveApproval: ({ taskId, messageId, approved }) => {
+        const stateBefore = get();
+        const task = stateBefore.tasks.find((item) => item.id === taskId);
+        const providerId = task?.provider;
+        const message = (stateBefore.messagesByTask[taskId] ?? []).find((item) => item.id === messageId);
+        const approvalPart = message?.parts.find((part) => part.type === "approval");
+        if (providerId && approvalPart && approvalPart.type === "approval") {
+          const respondApproval = window.api?.provider?.respondApproval;
+          if (respondApproval) {
+            void respondApproval({
+              providerId,
+              requestId: approvalPart.requestId,
+              approved,
+            }).then((result) => {
+              if (!result.ok) {
+                set((state) => {
+                  const current = state.messagesByTask[taskId] ?? [];
+                  const systemMessage: ChatMessage = {
+                    id: buildMessageId({ taskId, count: current.length }),
+                    role: "assistant",
+                    model: "system",
+                    providerId: "user",
+                    content: `Approval delivery failed: ${result.message ?? "unknown"}`,
+                    parts: [{
+                      type: "system_event",
+                      content: `Approval delivery failed: ${result.message ?? "unknown"}`,
+                    }],
+                  };
+                  return {
+                    messagesByTask: {
+                      ...state.messagesByTask,
+                      [taskId]: [...current, systemMessage],
+                    },
+                  };
+                });
+                return;
+              }
+              applyApprovalState({ taskId, messageId, approved });
+            }).catch((error) => {
+              set((state) => {
+                const current = state.messagesByTask[taskId] ?? [];
+                const failureText = `Approval delivery failed: ${String(error)}`;
+                const systemMessage: ChatMessage = {
+                  id: buildMessageId({ taskId, count: current.length }),
+                  role: "assistant",
+                  model: "system",
+                  providerId: "user",
+                  content: failureText,
+                  parts: [{
+                    type: "system_event",
+                    content: failureText,
+                  }],
+                };
+                return {
+                  messagesByTask: {
+                    ...state.messagesByTask,
+                    [taskId]: [...current, systemMessage],
+                  },
+                };
+              });
+            });
+            return;
+          }
+        }
+        applyApprovalState({ taskId, messageId, approved });
+      },
+      resolveUserInput: ({ taskId, messageId, answers, denied }) => {
+        const stateBefore = get();
+        const task = stateBefore.tasks.find((item) => item.id === taskId);
+        const providerId = task?.provider;
+        const message = (stateBefore.messagesByTask[taskId] ?? []).find((item) => item.id === messageId);
+        const userInputPart = message?.parts.find((part) => part.type === "user_input");
+        if (providerId && userInputPart && userInputPart.type === "user_input") {
+          const respondUserInput = window.api?.provider?.respondUserInput;
+          if (respondUserInput) {
+            void respondUserInput({
+              providerId,
+              requestId: userInputPart.requestId,
+              answers,
+              denied,
+            }).then((result) => {
+              if (!result.ok) {
+                set((state) => {
+                  const current = state.messagesByTask[taskId] ?? [];
+                  const failureText = `User input delivery failed: ${result.message ?? "unknown"}`;
+                  const systemMessage: ChatMessage = {
+                    id: buildMessageId({ taskId, count: current.length }),
+                    role: "assistant",
+                    model: "system",
+                    providerId: "user",
+                    content: failureText,
+                    parts: [{
+                      type: "system_event",
+                      content: failureText,
+                    }],
+                  };
+                  return {
+                    messagesByTask: {
+                      ...state.messagesByTask,
+                      [taskId]: [...current, systemMessage],
+                    },
+                  };
+                });
+                return;
+              }
+              applyUserInputState({ taskId, messageId, answers, denied });
+            }).catch((error) => {
+              set((state) => {
+                const current = state.messagesByTask[taskId] ?? [];
+                const failureText = `User input delivery failed: ${String(error)}`;
+                const systemMessage: ChatMessage = {
+                  id: buildMessageId({ taskId, count: current.length }),
+                  role: "assistant",
+                  model: "system",
+                  providerId: "user",
+                  content: failureText,
+                  parts: [{
+                    type: "system_event",
+                    content: failureText,
+                  }],
+                };
+                return {
+                  messagesByTask: {
+                    ...state.messagesByTask,
+                    [taskId]: [...current, systemMessage],
+                  },
+                };
+              });
+            });
+            return;
+          }
+        }
+        applyUserInputState({ taskId, messageId, answers, denied });
+      },
+      resolveDiff: ({ taskId, messageId, accepted }) => {
+        set((state) => {
+          const current = state.messagesByTask[taskId] ?? [];
+          return {
+            messagesByTask: {
+              ...state.messagesByTask,
+              [taskId]: updateMessageById({
+                messages: current,
+                messageId,
+                update: (message) => ({
+                  ...message,
+                  parts: message.parts.map((part) => {
+                    if (part.type !== "code_diff") {
+                      return part;
+                    }
+                    return {
+                      ...part,
+                      status: accepted ? "accepted" : "rejected",
+                    };
+                  }),
+                }),
+              }),
+            },
+          };
+        });
+      },
+      openDiffInEditor: ({ messageId, filePath, oldContent, newContent }) => {
+        set((state) => {
+          const existing = state.editorTabs.find((tab) => tab.id === messageId);
+          if (existing) {
+            return {
+              activeEditorTabId: existing.id,
+              layout: { ...state.layout, editorVisible: true, editorDiffMode: true },
+            };
+          }
+
+          const nextTab: EditorTab = {
+            id: messageId,
+            filePath,
+            kind: "text",
+            language: resolveLanguage({ filePath }),
+            content: newContent,
+            originalContent: oldContent,
+            baseRevision: null,
+            hasConflict: false,
+            isDirty: false,
+          };
+
+          return {
+            editorTabs: [...state.editorTabs, nextTab],
+            activeEditorTabId: nextTab.id,
+            layout: { ...state.layout, editorVisible: true, editorDiffMode: true },
+          };
+        });
+      },
+      openFileFromTree: async ({ filePath }) => {
+        const isImageFile = isImageFilePath({ filePath });
+        let fileData = isImageFile ? null : await workspaceFsAdapter.readFile({ filePath });
+        let imageData = isImageFile ? await workspaceFsAdapter.readFileDataUrl({ filePath }) : null;
+        if (!fileData && !imageData) {
+          const state = get();
+          const workspaceRootPath = state.workspacePathById[state.activeWorkspaceId] || state.projectPath;
+          if (workspaceRootPath) {
+            await workspaceFsAdapter.setRoot?.({
+              rootPath: workspaceRootPath,
+              rootName: state.workspaceRootName ?? "project",
+            });
+            fileData = isImageFile ? null : await workspaceFsAdapter.readFile({ filePath });
+            imageData = isImageFile ? await workspaceFsAdapter.readFileDataUrl({ filePath }) : null;
+          }
+        }
+
+        set((state) => {
+          const tabId = `file:${filePath}`;
+          const existing = state.editorTabs.find((tab) => tab.id === tabId);
+          if (existing) {
+            return {
+              activeEditorTabId: existing.id,
+              layout: { ...state.layout, editorVisible: true, editorDiffMode: false },
+            };
+          }
+
+          const fileContent = isImageFile ? imageData?.dataUrl ?? "" : fileData?.content ?? "";
+          const baseRevision = isImageFile ? imageData?.revision ?? null : fileData?.revision ?? null;
+          const nextTab: EditorTab = {
+            id: tabId,
+            filePath,
+            kind: isImageFile ? "image" : "text",
+            language: resolveLanguage({ filePath }),
+            content: fileContent,
+            originalContent: isImageFile ? undefined : fileContent,
+            baseRevision,
+            hasConflict: false,
+            isDirty: false,
+          };
+
+          return {
+            editorTabs: [...state.editorTabs, nextTab],
+            activeEditorTabId: nextTab.id,
+            layout: { ...state.layout, editorVisible: true, editorDiffMode: false },
+          };
+        });
+      },
+      setActiveEditorTab: ({ tabId }) =>
+        set((state) => {
+          const selectedTab = state.editorTabs.find((tab) => tab.id === tabId);
+          if (!selectedTab) {
+            return { activeEditorTabId: tabId };
+          }
+          const isDiffTab = selectedTab.kind !== "image"
+            && !selectedTab.id.startsWith("file:")
+            && selectedTab.originalContent !== null;
+          return {
+            activeEditorTabId: tabId,
+            layout: {
+              ...state.layout,
+              editorDiffMode: isDiffTab,
+            },
+          };
+        }),
+      reorderEditorTabs: ({ fromTabId, toTabId }) =>
+        set((state) => {
+          const fromIndex = state.editorTabs.findIndex((tab) => tab.id === fromTabId);
+          const toIndex = state.editorTabs.findIndex((tab) => tab.id === toTabId);
+          if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+            return {};
+          }
+
+          const nextTabs = [...state.editorTabs];
+          const [movedTab] = nextTabs.splice(fromIndex, 1);
+          if (!movedTab) {
+            return {};
+          }
+          nextTabs.splice(toIndex, 0, movedTab);
+          return { editorTabs: nextTabs };
+        }),
+      closeEditorTab: ({ tabId }) =>
+        set((state) => {
+          const closingIndex = state.editorTabs.findIndex((tab) => tab.id === tabId);
+          if (closingIndex < 0) {
+            return {};
+          }
+          const nextTabs = state.editorTabs.filter((tab) => tab.id !== tabId);
+          if (nextTabs.length === 0) {
+            return {
+              editorTabs: [],
+              activeEditorTabId: null,
+              layout: {
+                ...state.layout,
+                editorDiffMode: false,
+              },
+            };
+          }
+
+          if (state.activeEditorTabId !== tabId) {
+            return { editorTabs: nextTabs };
+          }
+
+          const fallbackIndex = Math.max(0, closingIndex - 1);
+          const fallbackTab = nextTabs[fallbackIndex] ?? nextTabs[0];
+          const isDiffTab = Boolean(fallbackTab && !fallbackTab.id.startsWith("file:") && fallbackTab.originalContent !== null);
+
+          return {
+            editorTabs: nextTabs,
+            activeEditorTabId: fallbackTab?.id ?? null,
+            layout: {
+              ...state.layout,
+              editorDiffMode: isDiffTab,
+            },
+          };
+        }),
+      updateEditorContent: ({ tabId, content }) => {
+        set((state) => ({
+          editorTabs: state.editorTabs.map((tab) => {
+            if (tab.id !== tabId) {
+              return tab;
+            }
+            if (tab.kind === "image") {
+              return tab;
+            }
+            return {
+              ...tab,
+              content,
+              isDirty: tab.originalContent !== content,
+              hasConflict: false,
+            };
+          }),
+        }));
+      },
+      saveActiveEditorTab: async () => {
+        const state = get();
+        const tabId = state.activeEditorTabId;
+        const activeTab = state.editorTabs.find((tab) => tab.id === tabId);
+        if (!activeTab) {
+          return { ok: false };
+        }
+        if (activeTab.kind === "image") {
+          return { ok: false };
+        }
+
+        let result = await workspaceFsAdapter.writeFile({
+          filePath: activeTab.filePath,
+          content: activeTab.content,
+          expectedRevision: activeTab.baseRevision,
+        });
+        if (!result.ok) {
+          const workspaceRootPath = state.workspacePathById[state.activeWorkspaceId] || state.projectPath;
+          if (workspaceRootPath) {
+            await workspaceFsAdapter.setRoot?.({
+              rootPath: workspaceRootPath,
+              rootName: state.workspaceRootName ?? "project",
+            });
+            result = await workspaceFsAdapter.writeFile({
+              filePath: activeTab.filePath,
+              content: activeTab.content,
+              expectedRevision: activeTab.baseRevision,
+            });
+          }
+        }
+
+        if (!result.ok) {
+          if (result.conflict) {
+            set((nextState) => ({
+              editorTabs: nextState.editorTabs.map((tab) =>
+                tab.id === activeTab.id
+                  ? {
+                      ...tab,
+                      hasConflict: true,
+                      baseRevision: result.revision ?? tab.baseRevision,
+                    }
+                  : tab
+              ),
+            }));
+          }
+          return { ok: false, conflict: result.conflict };
+        }
+
+        set((nextState) => ({
+          editorTabs: nextState.editorTabs.map((tab) =>
+            tab.id === activeTab.id
+              ? {
+                  ...tab,
+                  originalContent: tab.content,
+                  baseRevision: result.revision ?? tab.baseRevision,
+                  hasConflict: false,
+                  isDirty: false,
+                }
+              : tab
+          ),
+        }));
+
+        return { ok: true };
+      },
+      checkOpenTabConflicts: async () => {
+        const state = get();
+        const updates: Array<{ tabId: string; fromDisk: string; revision: string; dirty: boolean; kind: "text" | "image" }> = [];
+
+        for (const tab of state.editorTabs) {
+          if (tab.kind === "image") {
+            const imageDisk = await workspaceFsAdapter.readFileDataUrl({ filePath: tab.filePath });
+            if (!imageDisk) {
+              continue;
+            }
+            if (tab.baseRevision && imageDisk.revision === tab.baseRevision) {
+              continue;
+            }
+            updates.push({
+              tabId: tab.id,
+              fromDisk: imageDisk.dataUrl,
+              revision: imageDisk.revision,
+              dirty: tab.isDirty,
+              kind: "image",
+            });
+            continue;
+          }
+
+          const disk = await workspaceFsAdapter.readFile({ filePath: tab.filePath });
+          if (!disk) {
+            continue;
+          }
+
+          if (tab.baseRevision && disk.revision === tab.baseRevision) {
+            continue;
+          }
+
+          updates.push({
+            tabId: tab.id,
+            fromDisk: disk.content,
+            revision: disk.revision,
+            dirty: tab.isDirty,
+            kind: "text",
+          });
+        }
+
+        if (updates.length === 0) {
+          return;
+        }
+
+        set((nextState) => ({
+          editorTabs: nextState.editorTabs.map((tab) => {
+            const update = updates.find((item) => item.tabId === tab.id);
+            if (!update) {
+              return tab;
+            }
+
+            if (update.dirty) {
+              return {
+                ...tab,
+                hasConflict: true,
+                baseRevision: update.revision,
+              };
+            }
+
+            return {
+              ...tab,
+              content: update.fromDisk,
+              originalContent: update.kind === "image" ? tab.originalContent : update.fromDisk,
+              baseRevision: update.revision,
+              hasConflict: false,
+              isDirty: false,
+            };
+          }),
+        }));
+      },
+      sendEditorContextToChat: ({ taskId, instruction }) => {
+        const state = get();
+        const tabId = state.activeEditorTabId;
+        const activeTab = state.editorTabs.find((tab) => tab.id === tabId);
+        if (!activeTab) {
+          return;
+        }
+
+        get().sendUserMessage({
+          taskId,
+          content: instruction ?? "",
+          fileContext: {
+            filePath: activeTab.filePath,
+            content: activeTab.kind === "image" ? `[image file omitted] ${activeTab.filePath}` : activeTab.content,
+            language: activeTab.kind === "image" ? "image" : activeTab.language || resolveLanguage({ filePath: activeTab.filePath }),
+            instruction,
+          },
+        });
+      },
+    }),
+    {
+      name: "stave-vnext-store",
+      partialize: (state) => ({
+        workspaces: state.workspaces,
+        activeWorkspaceId: state.activeWorkspaceId,
+        projectPath: state.projectPath,
+        defaultBranch: state.defaultBranch,
+        workspaceBranchById: state.workspaceBranchById,
+        workspacePathById: state.workspacePathById,
+        workspaceDefaultById: state.workspaceDefaultById,
+        taskCheckpointById: state.taskCheckpointById,
+        providerAvailability: state.providerAvailability,
+        isDarkMode: state.isDarkMode,
+        activeTaskId: state.activeTaskId,
+        draftProvider: state.draftProvider,
+        tasks: state.tasks,
+        messagesByTask: state.messagesByTask,
+        layout: state.layout,
+        settings: state.settings,
+        editorTabs: state.editorTabs,
+        activeEditorTabId: state.activeEditorTabId,
+        workspaceRootName: state.workspaceRootName,
+        projectFiles: state.projectFiles,
+      }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) {
+          return;
+        }
+        // Merge with defaultSettings so newly added fields are never undefined
+        // for users whose persisted state pre-dates those fields.
+        state.settings = { ...defaultSettings, ...state.settings };
+        const isDark = resolveDarkModeForTheme({
+          themeMode: state.settings?.themeMode ?? "dark",
+          fallback: state.isDarkMode,
+        });
+        state.isDarkMode = isDark;
+        applyThemeClass({ enabled: isDark });
+        applyThemeOverrides({ themeOverrides: state.settings.themeOverrides });
+      },
+    }
+  )
+);

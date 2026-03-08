@@ -1,0 +1,18 @@
+appId: com.astyfx.stave
+productName: Stave
+files:
+  - out/**
+  - package.json
+directories:
+  output: release
+asar: true
+linux:
+  target:
+    - AppImage
+  category: Development
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg

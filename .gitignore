@@ -1,0 +1,15 @@
+.DS_Store
+.stave/
+node_modules/
+dist/
+out/
+release/
+*.tsbuildinfo
+playwright-report/
+test-results/
+tests/artifacts/
+ref/
+debug/
+docs/
+AGENTS.local.md
+tracking/
