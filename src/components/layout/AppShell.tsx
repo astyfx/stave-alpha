@@ -1,9 +1,10 @@
-import { Suspense, lazy, useEffect, useRef } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { TopBar } from "@/components/layout/TopBar";
 import { WorkspaceBar } from "@/components/layout/WorkspaceBar";
 import { TaskList } from "@/components/layout/TaskList";
 import { ChatArea } from "@/components/session/ChatArea";
 import { TerminalDock } from "@/components/layout/TerminalDock";
+import { Toaster } from "@/components/ui";
 import { useAppStore } from "@/store/app.store";
 import { EditorMainPanel } from "@/components/layout/EditorMainPanel";
 
@@ -26,6 +27,8 @@ export function AppShell() {
   const selectTask = useAppStore((state) => state.selectTask);
   const terminalDockHeight = layout.terminalDockHeight ?? 210;
   const panelRowRef = useRef<HTMLDivElement>(null);
+  const [zoomHudPercent, setZoomHudPercent] = useState<number | null>(null);
+  const zoomHudTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -34,6 +37,25 @@ export function AppShell() {
 
     return () => window.clearInterval(timer);
   }, [checkOpenTabConflicts]);
+
+  useEffect(() => {
+    const unsubscribe = window.api?.window?.subscribeZoomChanges?.(({ percent }) => {
+      setZoomHudPercent(percent);
+      if (zoomHudTimerRef.current !== null) {
+        window.clearTimeout(zoomHudTimerRef.current);
+      }
+      zoomHudTimerRef.current = window.setTimeout(() => {
+        setZoomHudPercent(null);
+        zoomHudTimerRef.current = null;
+      }, 1200);
+    });
+    return () => {
+      if (zoomHudTimerRef.current !== null) {
+        window.clearTimeout(zoomHudTimerRef.current);
+      }
+      unsubscribe?.();
+    };
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -118,11 +140,18 @@ export function AppShell() {
 
   return (
     <div className="flex h-full w-full flex-col bg-background text-foreground">
+      {zoomHudPercent !== null ? (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-50 -translate-x-1/2">
+          <div className="rounded-full border border-border/80 bg-card/95 px-3 py-1 text-sm font-medium text-foreground shadow-lg backdrop-blur-sm">
+            Zoom {zoomHudPercent}%
+          </div>
+        </div>
+      ) : null}
+      <Toaster />
       <TopBar />
       <div className="m-0 flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border/70 bg-muted/50">
         <WorkspaceBar />
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          {/* TaskList: full height on the left, unaffected by terminal */}
           <div className="flex min-h-0 flex-col pb-2">
             <TaskList />
           </div>
@@ -146,15 +175,11 @@ export function AppShell() {
               }}
             />
           ) : null}
-          {/* Right side: panels column + terminal below */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden pb-2">
-            {/* Horizontal panel row: Chat | Editor | Explorer */}
             <div ref={panelRowRef} className="flex min-h-0 flex-1 overflow-hidden pr-2">
-              {/* Chat panel */}
               <div className="min-h-0 min-w-[420px] flex-1">
                 <ChatArea />
               </div>
-              {/* Editor panel */}
               {layout.editorVisible ? (
                 <>
                   <div
@@ -186,7 +211,6 @@ export function AppShell() {
                   </div>
                 </>
               ) : null}
-              {/* Explorer panel */}
               {layout.sidebarOverlayVisible ? (
                 <>
                   <div
@@ -221,7 +245,6 @@ export function AppShell() {
                 </>
               ) : null}
             </div>
-            {/* Terminal dock */}
             {layout.terminalDocked ? (
               <>
                 <div

@@ -1,7 +1,7 @@
 import { memo, Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
-import { Check, ChevronDown, ChevronRight, Copy, MessageSquareIcon } from "lucide-react";
-import { Badge, Button, Card, Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, WaveIndicator } from "@/components/ui";
+import { Activity, Check, ChevronDown, ChevronRight, Copy, MessageSquareIcon } from "lucide-react";
+import { Badge, Button, Card, Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle, Toggle, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, WaveIndicator } from "@/components/ui";
 import {
   ChainOfThought,
   type ChainOfThoughtStep,
@@ -36,11 +36,21 @@ import {
   UserInputCard,
   parseSubagentToolInput,
 } from "@/components/ai-elements";
-import { getRenderableMessageParts, groupMessageParts, isPendingDiffStatus, summarizeDiffLineChanges } from "@/components/session/chat-panel.utils";
+import {
+  getLatestUserMessageId,
+  getMessageBodyFallbackState,
+  getMessageScrollFingerprint,
+  getRenderableMessageParts,
+  groupMessageParts,
+  hasVisibleMessagePartContent,
+  isPendingDiffStatus,
+  summarizeDiffLineChanges,
+} from "@/components/session/chat-panel.utils";
 import { formatTaskUpdatedAt } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
 import type { CodeDiffPart, FileContextPart, MessagePart } from "@/types/chat";
+import { TurnDiagnosticsPanel } from "@/components/session/TurnDiagnosticsPanel";
 
 const ReactDiffViewer = lazy(() => import("react-diff-viewer-continued"));
 
@@ -372,12 +382,16 @@ function MessagePartRenderer(args: { part: MessagePart; taskId: string; messageI
         );
       }
       return (
-        <Tool defaultOpen={false}>
+        <Tool
+          defaultOpen={part.state === "input-streaming" || part.state === "output-error"}
+          openWhen={part.state === "input-streaming" || part.state === "output-error"}
+        >
           <ToolHeader type={part.toolName} state={part.state} />
           <ToolContent>
             <ToolInput input={part.input} />
-            {part.state !== "input-streaming" && (
+            {(part.state !== "input-streaming" || part.output?.trim()) && (
               <ToolOutput
+                label={part.state === "input-streaming" ? "Live output" : undefined}
                 output={part.output ? <pre className="whitespace-pre-wrap text-sm">{part.output}</pre> : null}
                 errorText={part.state === "output-error" ? (part.output ?? "Tool failed.") : undefined}
               />
@@ -464,16 +478,6 @@ function buildChainOfThoughtSteps(parts: MessagePart[]): ChainOfThoughtStep[] {
   return steps;
 }
 
-function hasVisibleContent(part: MessagePart): boolean {
-  if (part.type === "thinking") {
-    return false;
-  }
-  if (part.type === "text") {
-    return part.text.trim().length > 0;
-  }
-  return true;
-}
-
 function MessageBody(args: {
   message: { content?: string; parts: MessagePart[]; isStreaming?: boolean };
   taskId: string;
@@ -490,12 +494,21 @@ function MessageBody(args: {
   const reasoningParts = useMemo(() => renderableParts.filter((part) => part.type === "thinking"), [renderableParts]);
   const hasReasoning = reasoningParts.length > 0;
   const reasoningText = useMemo(() => reasoningParts.map((part) => part.text).join(""), [reasoningParts]);
-  const visibleParts = useMemo(() => renderableParts.filter(hasVisibleContent), [renderableParts]);
+  const visibleParts = useMemo(() => renderableParts.filter(hasVisibleMessagePartContent), [renderableParts]);
   const chainOfThoughtSteps = useMemo(() => buildChainOfThoughtSteps(renderableParts), [renderableParts]);
   const hasChainOfThought = chainOfThoughtSteps.length > 0;
   const showChainOfThought = hasChainOfThought && !hasReasoning;
+  const segments = useMemo(() => groupMessageParts(visibleParts), [visibleParts]);
+  const lastTextPartIndex = useMemo(
+    () => visibleParts.map((p, i) => (p.type === "text" ? i : -1)).filter((i) => i !== -1).at(-1),
+    [visibleParts]
+  );
+  const fallbackState = useMemo(() => getMessageBodyFallbackState({
+    isActivelyStreaming,
+    renderableParts,
+  }), [isActivelyStreaming, renderableParts]);
 
-  if (isActivelyStreaming && visibleParts.length === 0 && !hasReasoning) {
+  if (fallbackState === "streaming-placeholder") {
     return (
       <Reasoning isStreaming>
         <ReasoningTrigger />
@@ -504,15 +517,9 @@ function MessageBody(args: {
     );
   }
 
-  if (!isActivelyStreaming && visibleParts.length === 0 && !hasReasoning) {
+  if (fallbackState === "empty-completed") {
     return <p className="text-sm italic text-muted-foreground">No response.</p>;
   }
-
-  const segments = useMemo(() => groupMessageParts(visibleParts), [visibleParts]);
-  const lastTextPartIndex = useMemo(
-    () => visibleParts.map((p, i) => (p.type === "text" ? i : -1)).filter((i) => i !== -1).at(-1),
-    [visibleParts]
-  );
 
   return (
     <>
@@ -525,9 +532,15 @@ function MessageBody(args: {
       {showChainOfThought ? <ChainOfThought isStreaming={isStreaming} steps={chainOfThoughtSteps} className={hasReasoning ? "mt-2" : undefined} /> : null}
       {segments.map((segment) => {
         if (segment.kind === "tools") {
+          const toolStates = segment.parts.map((p) => (p.type === "tool_use" ? p.state : undefined));
+          const hasActiveOrErroredTool = toolStates.some((state) => state === "input-streaming" || state === "output-error");
           return (
             <div key={`${messageId}-tools-${segment.startIndex}`} className="mt-2 first:mt-0">
-              <ToolGroup states={segment.parts.map((p) => (p.type === "tool_use" ? p.state : undefined))}>
+              <ToolGroup
+                states={toolStates}
+                defaultOpen={hasActiveOrErroredTool}
+                openWhen={hasActiveOrErroredTool}
+              >
                 {segment.parts.map((part, idx) => (
                   <MessagePartRenderer
                     key={`${messageId}-part-${segment.startIndex + idx}`}
@@ -664,7 +677,11 @@ export function ChatPanel() {
   const tasks = useAppStore((state) => state.tasks);
   const messagesByTask = useAppStore((state) => state.messagesByTask);
   const activeTurnIdsByTask = useAppStore((state) => state.activeTurnIdsByTask);
+  const updateSettings = useAppStore((state) => state.updateSettings);
   const chatStreamingEnabled = useAppStore((state) => state.settings.chatStreamingEnabled);
+  const turnDiagnosticsVisible = useAppStore((state) => state.settings.turnDiagnosticsVisible);
+  const activeWorkspaceId = useAppStore((state) => state.activeWorkspaceId);
+  const providerConversationByTask = useAppStore((state) => state.providerConversationByTask);
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now());
   const scrollAnchorByTaskRef = useRef(new Map<string, TaskScrollAnchor>());
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
@@ -676,19 +693,26 @@ export function ChatPanel() {
   const activeTaskUpdatedAt = activeTask?.updatedAt;
   const activeTurnId = activeTurnIdsByTask[activeTaskId];
   const liveStreamingMessageId = activeTurnId ? visibleMessages.at(-1)?.id : undefined;
+  const latestUserMessageId = useMemo(() => getLatestUserMessageId(visibleMessages), [visibleMessages]);
+  const lastVisibleMessageScrollFingerprint = useMemo(
+    () => getMessageScrollFingerprint(visibleMessages.at(-1)),
+    [visibleMessages]
+  );
   const conversationDownloadRows = useMemo(() => messages.map((message) => ({
     role: message.role,
     content: message.isPlanResponse
       ? `[Plan]\n${message.planText?.trim() || message.content}`
       : message.content,
   })), [messages]);
-  const autoScrollKey = `${visibleMessages.length}:${liveStreamingMessageId ?? "idle"}:${activeTurnId ?? "none"}`;
+  const autoScrollKey = `${visibleMessages.length}:${lastVisibleMessageScrollFingerprint}`;
+  const forceScrollKey = latestUserMessageId;
   const messageIndexById = useMemo(
     () => new Map(visibleMessages.map((message, index) => [message.id, index])),
     [visibleMessages]
   );
   const restoreAnchor = activeTaskId ? scrollAnchorByTaskRef.current.get(activeTaskId) : undefined;
   const restoreItemIndex = restoreAnchor ? messageIndexById.get(restoreAnchor.anchorMessageId) : undefined;
+  const canToggleTurnDiagnostics = Boolean(activeWorkspaceId && activeTaskId);
 
   useEffect(() => {
     const handle = window.setInterval(() => {
@@ -710,11 +734,51 @@ export function ChatPanel() {
               </span>
             ) : null}
           </div>
-          <Badge variant="secondary">{visibleMessages.length} messages</Badge>
+          <div className="flex shrink-0 items-center gap-2">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Toggle
+                    size="sm"
+                    variant="outline"
+                    pressed={turnDiagnosticsVisible}
+                    disabled={!canToggleTurnDiagnostics}
+                    aria-label={turnDiagnosticsVisible ? "Hide turn diagnostics" : "Show turn diagnostics"}
+                    className={cn(
+                      "h-7 rounded-sm px-2 text-xs shadow-none",
+                      turnDiagnosticsVisible
+                        ? "border-border/80 bg-secondary/80 text-foreground hover:bg-secondary/80"
+                        : "border-transparent text-muted-foreground hover:border-border/80 hover:bg-muted hover:text-foreground"
+                    )}
+                    onPressedChange={(pressed) => updateSettings({ patch: { turnDiagnosticsVisible: pressed } })}
+                  >
+                    <Activity className="size-3.5 shrink-0" />
+                    <span>Diagnostics</span>
+                  </Toggle>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {turnDiagnosticsVisible ? "Hide turn diagnostics" : "Show turn diagnostics"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <Badge variant="secondary">{visibleMessages.length} messages</Badge>
+          </div>
         </header>
+        {turnDiagnosticsVisible && activeWorkspaceId && activeTaskId ? (
+          <TurnDiagnosticsPanel
+            workspaceId={activeWorkspaceId}
+            taskId={activeTaskId}
+            activeTurnId={activeTurnId}
+            taskProvider={activeTask?.provider ?? "claude-code"}
+            providerConversations={providerConversationByTask[activeTaskId]}
+          />
+        ) : null}
         <ConversationContent
           autoScrollKey={autoScrollKey}
           autoScrollBehavior="auto"
+          forceScrollKey={forceScrollKey}
+          scrollScopeKey={activeTaskId}
+          forceScrollScopeKey={activeTaskId}
           withInnerLayout={visibleMessages.length === 0}
           onScrollPositionChange={({ container }) => {
             if (!activeTaskId) {
@@ -752,6 +816,8 @@ export function ChatPanel() {
               listKey={activeTaskId}
               listRef={virtuosoRef}
               data={visibleMessages}
+              forceScrollKey={forceScrollKey}
+              forceScrollScopeKey={activeTaskId}
               restoreItemIndex={restoreItemIndex}
               restoreItemId={restoreAnchor?.anchorMessageId}
               restoreItemOffset={restoreAnchor?.offset}

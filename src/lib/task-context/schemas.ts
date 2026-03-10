@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WorkspaceSnapshot } from "@/lib/db/workspaces.db";
+import { CURRENT_WORKSPACE_SNAPSHOT_VERSION, migrateWorkspaceSnapshotPayload } from "@/lib/task-context/workspace-snapshot";
 
 const TextPartSchema = z.object({
   type: z.literal("text"),
@@ -14,6 +15,7 @@ const ThinkingPartSchema = z.object({
 
 const ToolUsePartSchema = z.object({
   type: z.literal("tool_use"),
+  toolUseId: z.string().optional(),
   toolName: z.string(),
   input: z.string(),
   output: z.string().optional(),
@@ -119,7 +121,13 @@ const TaskSchema = z.object({
   archivedAt: z.string().nullable().optional().transform((value) => value ?? null),
 });
 
+const TaskProviderConversationStateSchema = z.object({
+  "claude-code": z.string().optional(),
+  codex: z.string().optional(),
+});
+
 export const WorkspaceSnapshotSchema = z.object({
+  version: z.literal(CURRENT_WORKSPACE_SNAPSHOT_VERSION),
   activeTaskId: z.string(),
   tasks: z.array(TaskSchema),
   messagesByTask: z.record(z.string(), z.array(ChatMessageSchema)),
@@ -127,10 +135,17 @@ export const WorkspaceSnapshotSchema = z.object({
     text: z.string(),
     attachedFilePath: z.string().optional().default(""),
   })).optional().default({}),
+  providerConversationByTask: z.record(z.string(), TaskProviderConversationStateSchema).optional().default({}),
 });
 
 export function parseWorkspaceSnapshot(args: { payload: unknown }): WorkspaceSnapshot | null {
-  const parsed = WorkspaceSnapshotSchema.safeParse(args.payload);
+  const migratedPayload = migrateWorkspaceSnapshotPayload({ payload: args.payload });
+  if (!migratedPayload) {
+    console.error("[task-context] invalid workspace snapshot payload", { reason: "migration_failed" });
+    return null;
+  }
+
+  const parsed = WorkspaceSnapshotSchema.safeParse(migratedPayload);
   if (!parsed.success) {
     console.error("[task-context] invalid workspace snapshot payload", parsed.error.flatten());
     return null;

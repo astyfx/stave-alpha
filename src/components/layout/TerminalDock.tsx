@@ -11,6 +11,38 @@ interface TerminalTab {
   label: string;
 }
 
+function waitForAnimationFrames(count: number) {
+  return new Promise<void>((resolve) => {
+    function step(remaining: number) {
+      if (remaining <= 0) {
+        resolve();
+        return;
+      }
+      window.requestAnimationFrame(() => step(remaining - 1));
+    }
+    step(count);
+  });
+}
+
+async function waitForTerminalFont(args: { fontFamily: string; fontSize: number }) {
+  if (typeof document === "undefined" || !("fonts" in document)) {
+    return;
+  }
+
+  const fonts = document.fonts;
+  const fontSpec = `${args.fontSize}px ${args.fontFamily}`;
+  const timeout = new Promise<void>((resolve) => window.setTimeout(resolve, 1200));
+
+  try {
+    await Promise.race([
+      Promise.allSettled([fonts.ready, fonts.load(fontSpec)]).then(() => undefined),
+      timeout,
+    ]);
+  } catch {
+    // Ignore font loading failures and continue with best-effort fitting.
+  }
+}
+
 function resolveTerminalTheme() {
   const styles = getComputedStyle(document.documentElement);
 
@@ -44,6 +76,7 @@ export function TerminalDock() {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [bridgeError, setBridgeError] = useState("");
+  const [terminalReady, setTerminalReady] = useState(false);
 
   const activeSessionId = useMemo(() => activeTabId, [activeTabId]);
   const taskKey = useMemo(() => `${activeWorkspaceId}:${activeTaskId || "no-task"}`, [activeTaskId, activeWorkspaceId]);
@@ -56,6 +89,7 @@ export function TerminalDock() {
     if (!containerRef.current || xtermRef.current) {
       return;
     }
+    let cancelled = false;
 
     const terminal = new Terminal({
       theme: resolveTerminalTheme(),
@@ -83,6 +117,27 @@ export function TerminalDock() {
       }
     };
 
+    const stabilizeTerminalMetrics = async () => {
+      await waitForAnimationFrames(2);
+      await waitForTerminalFont({
+        fontFamily: settings.terminalFontFamily || '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
+        fontSize: settings.terminalFontSize || 13,
+      });
+      await waitForAnimationFrames(1);
+
+      if (cancelled) {
+        return;
+      }
+
+      fitAddon.fit();
+      terminal.clearTextureAtlas();
+      terminal.refresh(0, Math.max(0, terminal.rows - 1));
+      sendResize();
+      if (!cancelled) {
+        setTerminalReady(true);
+      }
+    };
+
     // ResizeObserver fires after layout is complete and fonts are applied,
     // so it handles both the initial fit and all subsequent size changes.
     const ro = new ResizeObserver(() => sendResize());
@@ -105,7 +160,11 @@ export function TerminalDock() {
       });
     });
 
+    void stabilizeTerminalMetrics();
+
     return () => {
+      cancelled = true;
+      setTerminalReady(false);
       disposable.dispose();
       ro.disconnect();
       terminal.dispose();
@@ -188,6 +247,9 @@ export function TerminalDock() {
 
   // Reset sessions only when the workspace directory changes (not on every task switch).
   useEffect(() => {
+    if (!terminalReady) {
+      return;
+    }
     setTabs([]);
     setActiveTabId(null);
     sessionBufferRef.current = {};
@@ -205,14 +267,14 @@ export function TerminalDock() {
       }
       sessionBufferRef.current = {};
     };
-  }, [workspaceCwd]);
+  }, [workspaceCwd, terminalReady]);
 
   // Fallback: ensure a session exists when a task is active but all sessions were cleared.
   useEffect(() => {
-    if (!activeTaskId || tabs.length > 0) return;
+    if (!terminalReady || !activeTaskId || tabs.length > 0) return;
     void createSessionTab();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTaskId, tabs.length]);
+  }, [activeTaskId, tabs.length, terminalReady]);
 
   useEffect(() => {
     const timer = window.setInterval(async () => {

@@ -4,6 +4,7 @@ import { Check, Copy } from "lucide-react";
 import { createHighlighter } from "shiki";
 import type { BundledLanguage } from "shiki";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store/app.store";
 
 // ---------------------------------------------------------------------------
 // Singleton highlighter
@@ -91,6 +92,12 @@ interface CodeBlockContentProps {
 
 export function CodeBlockContent({ code, language }: CodeBlockContentProps) {
   const [html, setHtml] = useState<string | null>(null);
+  const messageCodeFontSize = useAppStore((state) => state.settings.messageCodeFontSize);
+  const codeSizeClass = messageCodeFontSize === "xl"
+    ? "text-xl"
+    : messageCodeFontSize === "lg"
+      ? "text-lg"
+      : "text-base";
 
   useEffect(() => {
     let cancelled = false;
@@ -112,7 +119,10 @@ export function CodeBlockContent({ code, language }: CodeBlockContentProps) {
   if (html) {
     return (
       <div
-        className="overflow-x-auto text-xs [&>pre]:m-0 [&>pre]:overflow-visible [&>pre]:px-4 [&>pre]:py-3"
+        className={cn(
+          "overflow-x-auto [&>pre]:m-0 [&>pre]:overflow-visible [&>pre]:px-4 [&>pre]:py-3",
+          codeSizeClass,
+        )}
         // Shiki output is sanitised — no user content reaches dangerouslySetInnerHTML
         // eslint-disable-next-line react/no-danger
         dangerouslySetInnerHTML={{ __html: html }}
@@ -122,7 +132,7 @@ export function CodeBlockContent({ code, language }: CodeBlockContentProps) {
 
   // Fallback: plain text while highlighter loads
   return (
-    <pre className="overflow-x-auto bg-editor px-4 py-3 text-xs text-editor-foreground">
+    <pre className={cn("overflow-x-auto bg-editor px-4 py-3 text-editor-foreground", codeSizeClass)}>
       <code>{code}</code>
     </pre>
   );

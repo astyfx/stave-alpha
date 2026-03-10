@@ -126,6 +126,64 @@ test("prompt input is focused after creating a task", async ({ page }) => {
   await expect(page.getByPlaceholder("Use / for commands, @ to search files (Enter to send)")).toBeFocused();
 });
 
+test("archiving the last active task returns the chat area to the splash state", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("stave:workspace-fallback:v1", JSON.stringify([{
+      id: "ws-main",
+      name: "main",
+      updatedAt: "2026-03-06T01:00:00.000Z",
+      snapshot: {
+        activeTaskId: "task-1",
+        tasks: [{
+          id: "task-1",
+          title: "Task 1",
+          provider: "claude-code",
+          updatedAt: "2026-03-06T01:00:00.000Z",
+          unread: false,
+          archivedAt: null,
+        }],
+        messagesByTask: {
+          "task-1": [],
+        },
+      },
+    }]));
+    window.localStorage.setItem("stave-store", JSON.stringify({
+      state: {
+        projectPath: "/tmp/stave-project",
+        workspaceRootName: "stave-project",
+        workspaces: [{ id: "ws-main", name: "main", updatedAt: "2026-03-06T01:00:00.000Z" }],
+        activeWorkspaceId: "ws-main",
+        workspaceBranchById: { "ws-main": "main" },
+        workspacePathById: { "ws-main": "/tmp/stave-project" },
+        workspaceDefaultById: { "ws-main": true },
+        activeTaskId: "task-1",
+        tasks: [{
+          id: "task-1",
+          title: "Task 1",
+          provider: "claude-code",
+          updatedAt: "2026-03-06T01:00:00.000Z",
+          unread: false,
+          archivedAt: null,
+        }],
+        messagesByTask: {
+          "task-1": [],
+        },
+      },
+      version: 0,
+    }));
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "task-actions-task-1" }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await expect(page.getByRole("heading", { name: "Archive Task" })).toBeVisible();
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+
+  await expect(page.getByTestId("empty-splash")).toBeVisible();
+});
+
 test("stale streaming message does not show responding wave without an active turn", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem("stave:workspace-fallback:v1", JSON.stringify([{

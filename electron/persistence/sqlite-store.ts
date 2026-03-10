@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
-import type { PersistenceTurnEvent, PersistenceWorkspaceSnapshot, PersistenceWorkspaceSummary } from "./types";
+import type { PersistenceTurnEvent, PersistenceTurnSummary, PersistenceWorkspaceSnapshot, PersistenceWorkspaceSummary } from "./types";
 
 interface WorkspaceMetaRow {
   id: string;
@@ -15,6 +15,16 @@ interface WorkspaceSnapshotRow {
 
 interface TableInfoRow {
   name: string;
+}
+
+interface TurnSummaryRow {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  provider_id: "claude-code" | "codex";
+  created_at: string;
+  completed_at: string | null;
+  event_count: number;
 }
 
 export class SqliteStore {
@@ -200,6 +210,11 @@ export class SqliteStore {
 
   deleteWorkspace(args: { workspaceId: string }) {
     const tx = this.db.transaction(() => {
+      this.db.prepare(`
+        DELETE FROM turn_events
+        WHERE turn_id IN (SELECT id FROM turns WHERE workspace_id = ?)
+      `).run(args.workspaceId);
+      this.db.prepare("DELETE FROM turns WHERE workspace_id = ?").run(args.workspaceId);
       this.db.prepare("DELETE FROM messages WHERE workspace_id = ?").run(args.workspaceId);
       this.db.prepare("DELETE FROM tasks WHERE workspace_id = ?").run(args.workspaceId);
       this.db.prepare("DELETE FROM workspaces WHERE id = ?").run(args.workspaceId);
@@ -278,6 +293,36 @@ export class SqliteStore {
       eventType: row.event_type,
       payload: JSON.parse(row.payload_json),
       createdAt: row.created_at,
+    }));
+  }
+
+  listTurns(args: { workspaceId: string; taskId: string; limit?: number }): PersistenceTurnSummary[] {
+    const limit = Math.max(1, Math.min(20, args.limit ?? 5));
+    const rows = this.db.prepare(`
+      SELECT
+        turns.id,
+        turns.workspace_id,
+        turns.task_id,
+        turns.provider_id,
+        turns.created_at,
+        turns.completed_at,
+        COUNT(turn_events.id) AS event_count
+      FROM turns
+      LEFT JOIN turn_events ON turn_events.turn_id = turns.id
+      WHERE turns.workspace_id = ? AND turns.task_id = ?
+      GROUP BY turns.id, turns.workspace_id, turns.task_id, turns.provider_id, turns.created_at, turns.completed_at
+      ORDER BY turns.created_at DESC
+      LIMIT ?
+    `).all(args.workspaceId, args.taskId, limit) as TurnSummaryRow[];
+
+    return rows.map((row) => ({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      taskId: row.task_id,
+      providerId: row.provider_id,
+      createdAt: row.created_at,
+      completedAt: row.completed_at,
+      eventCount: row.event_count,
     }));
   }
 

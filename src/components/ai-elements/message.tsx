@@ -13,6 +13,16 @@ import {
   CodeBlockTitle,
 } from "./code-block";
 
+function resolveMessageSizeClass(size: "base" | "lg" | "xl") {
+  if (size === "xl") {
+    return "text-xl";
+  }
+  if (size === "lg") {
+    return "text-lg";
+  }
+  return "text-base";
+}
+
 interface MessageProps extends HTMLAttributes<HTMLDivElement> {
   from: "user" | "assistant";
 }
@@ -32,10 +42,12 @@ export function Message({ from, className, ...props }: MessageProps) {
 }
 
 export function MessageContent(props: HTMLAttributes<HTMLDivElement>) {
+  const messageFontSize = useAppStore((state) => state.settings.messageFontSize);
   return (
     <div
       className={cn(
-        "w-full rounded-md border border-border/80 bg-card px-3 py-2 text-lg leading-7 shadow-sm",
+        "w-full rounded-md border border-border/80 bg-card px-3 py-2 leading-7 shadow-sm",
+        resolveMessageSizeClass(messageFontSize),
         "group-[.is-user]:border-primary/40 group-[.is-user]:bg-primary/15"
       )}
       {...props}
@@ -60,6 +72,8 @@ export function MessageResponse({ isStreaming, ...props }: MessageResponseProps)
   const activeWorkspaceId = useAppStore((state) => state.activeWorkspaceId);
   const workspacePathById = useAppStore((state) => state.workspacePathById);
   const projectPath = useAppStore((state) => state.projectPath);
+  const messageFontSize = useAppStore((state) => state.settings.messageFontSize);
+  const messageCodeFontSize = useAppStore((state) => state.settings.messageCodeFontSize);
 
   const content = typeof props.children === "string" ? props.children : "";
   const workspaceCwd = workspacePathById[activeWorkspaceId] ?? projectPath ?? "";
@@ -110,7 +124,14 @@ export function MessageResponse({ isStreaming, ...props }: MessageResponseProps)
   }
 
   return (
-    <div className="text-lg leading-7" data-streaming={isStreaming ? "true" : undefined} {...props}>
+    <div
+      className={cn(
+        "leading-7",
+        resolveMessageSizeClass(messageFontSize),
+      )}
+      data-streaming={isStreaming ? "true" : undefined}
+      {...props}
+    >
       {isStreaming ? (
         <div className="whitespace-pre-wrap break-words">{content}</div>
       ) : (
@@ -146,7 +167,16 @@ export function MessageResponse({ isStreaming, ...props }: MessageResponseProps)
                   </CodeBlock>
                 );
               }
-              return <code className="rounded bg-muted px-1 py-0.5 text-xs font-mono">{children}</code>;
+              return (
+                <code
+                  className={cn(
+                    "rounded bg-muted px-1 py-0.5 font-mono",
+                    resolveMessageSizeClass(messageCodeFontSize),
+                  )}
+                >
+                  {children}
+                </code>
+              );
             },
             // Unwrap <pre> — the code override above renders the full block
             pre: ({ children }) => <>{children}</>,

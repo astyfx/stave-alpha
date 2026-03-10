@@ -1,6 +1,7 @@
 import { Archive, Check, CirclePlus, Copy, Download, Ellipsis, Hash, LoaderCircle, PanelLeft, Pencil, Plus, RectangleEllipsis } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatTaskUpdatedAt, getTaskCounts, getVisibleTasks, isTaskArchived, type TaskFilter } from "@/lib/tasks";
+import { getProviderConversationLabel, listProviderConversations } from "@/lib/providers/provider-conversations";
 import { useAppStore } from "@/store/app.store";
 import { cn } from "@/lib/utils";
 import { Badge, Button, Card, DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Input, Kbd, KbdGroup, KbdSeparator, WaveIndicator } from "@/components/ui";
@@ -13,15 +14,16 @@ export function TaskList() {
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("active");
   const [taskToArchive, setTaskToArchive] = useState<{ id: string; title: string } | null>(null);
   const [taskToRename, setTaskToRename] = useState<{ id: string; title: string } | null>(null);
-  const [taskToViewSession, setTaskToViewSession] = useState<{ id: string; title: string; provider: "claude-code" | "codex" } | null>(null);
+  const [taskToViewSession, setTaskToViewSession] = useState<{ id: string; title: string } | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [copiedSessionId, setCopiedSessionId] = useState(false);
+  const [copiedSessionIdKey, setCopiedSessionIdKey] = useState<string | null>(null);
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now());
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const tasks = useAppStore((state) => state.tasks);
   const layout = useAppStore((state) => state.layout);
   const activeTaskId = useAppStore((state) => state.activeTaskId);
   const activeTurnIdsByTask = useAppStore((state) => state.activeTurnIdsByTask);
+  const providerConversationByTask = useAppStore((state) => state.providerConversationByTask);
   const selectTask = useAppStore((state) => state.selectTask);
   const archiveTask = useAppStore((state) => state.archiveTask);
   const renameTask = useAppStore((state) => state.renameTask);
@@ -57,12 +59,22 @@ export function TaskList() {
   }, []);
 
   useEffect(() => {
-    if (!taskToViewSession || !copiedSessionId) {
+    if (!taskToViewSession || !copiedSessionIdKey) {
       return;
     }
-    const handle = window.setTimeout(() => setCopiedSessionId(false), 1500);
+    const handle = window.setTimeout(() => setCopiedSessionIdKey(null), 1500);
     return () => window.clearTimeout(handle);
-  }, [copiedSessionId, taskToViewSession]);
+  }, [copiedSessionIdKey, taskToViewSession]);
+
+  const sessionTask = taskToViewSession
+    ? tasks.find((task) => task.id === taskToViewSession.id) ?? null
+    : null;
+  const sessionProviderConversations = taskToViewSession
+    ? providerConversationByTask[taskToViewSession.id]
+    : undefined;
+  const sessionConversationRows = listProviderConversations({
+    conversations: sessionProviderConversations,
+  });
 
   function handleRenameConfirm() {
     if (!taskToRename) {
@@ -187,7 +199,7 @@ export function TaskList() {
     <>
     <aside
       data-testid="task-list"
-      className="hidden h-full shrink-0 px-2 lg:flex lg:flex-col"
+      className="hidden h-full shrink-0 px-3.5 lg:flex lg:flex-col"
       style={{ width: `${layout.taskListWidth}px`, minWidth: "160px" }}
     >
       <div className="mb-2">
@@ -298,11 +310,11 @@ export function TaskList() {
                         Export
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => {
-                        setCopiedSessionId(false);
-                        setTaskToViewSession({ id: task.id, title: task.title, provider: task.provider });
+                        setCopiedSessionIdKey(null);
+                        setTaskToViewSession({ id: task.id, title: task.title });
                       }}>
                         <Hash />
-                        View Session ID
+                        View Session IDs
                       </DropdownMenuItem>
                     </DropdownMenuGroup>
                     <DropdownMenuSeparator />
@@ -386,33 +398,71 @@ export function TaskList() {
         <Card className="w-full max-w-lg rounded-lg border-border/80 bg-card p-4 shadow-xl" onMouseDown={(event) => event.stopPropagation()}>
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold text-foreground">Session ID</h3>
+              <h3 className="text-base font-semibold text-foreground">Conversation IDs</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                This is Stave&apos;s task session identifier for <span className="font-medium text-foreground">{taskToViewSession.title}</span>.
-                Claude SDK session state and Codex thread state are scoped from this task id inside the provider runtime.
+                Stave keeps its own stable task id, and each provider keeps its own native conversation id.
+                For <span className="font-medium text-foreground">{taskToViewSession.title}</span>, these ids can coexist because one task can switch between Claude and Codex.
               </p>
             </div>
             <Badge variant="secondary" className="shrink-0">
-              {taskToViewSession.provider === "claude-code" ? "Claude" : "Codex"}
+              {sessionTask?.provider === "claude-code" ? "Current: Claude" : sessionTask?.provider === "codex" ? "Current: Codex" : "Task"}
             </Badge>
           </div>
-          <div className="mt-4 rounded-md border border-border/80 bg-background px-3 py-2 font-mono text-sm text-foreground">
-            {taskToViewSession.id}
+          <div className="mt-4 space-y-3">
+            <div className="rounded-md border border-border/80 bg-background px-3 py-2">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Stave task ID</p>
+              <div className="mt-1 flex items-center justify-between gap-3">
+                <p className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">{taskToViewSession.id}</p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 shrink-0 px-2"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(taskToViewSession.id);
+                    setCopiedSessionIdKey("task");
+                  }}
+                >
+                  {copiedSessionIdKey === "task" ? <Check className="size-4" /> : <Copy className="size-4" />}
+                  {copiedSessionIdKey === "task" ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            </div>
+            {sessionConversationRows.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border/70 bg-muted/20 px-3 py-3 text-sm text-muted-foreground">
+                No provider-native conversation ids have been recorded for this task yet.
+              </div>
+            ) : (
+              sessionConversationRows.map((row) => (
+                <div key={row.providerId} className="rounded-md border border-border/80 bg-background px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                      {getProviderConversationLabel({ providerId: row.providerId })}
+                    </p>
+                    <Badge variant={sessionTask?.provider === row.providerId ? "secondary" : "outline"}>
+                      {row.providerId === "claude-code" ? "Claude" : "Codex"}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 flex items-center justify-between gap-3">
+                    <p className="min-w-0 flex-1 truncate font-mono text-sm text-foreground">{row.nativeConversationId}</p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 shrink-0 px-2"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(row.nativeConversationId);
+                        setCopiedSessionIdKey(row.providerId);
+                      }}
+                    >
+                      {copiedSessionIdKey === row.providerId ? <Check className="size-4" /> : <Copy className="size-4" />}
+                      {copiedSessionIdKey === row.providerId ? "Copied" : "Copy"}
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            This is not the raw provider-issued id shown by Claude or Codex directly. It is the stable Stave task id those provider sessions attach to.
-          </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="outline" onClick={() => setTaskToViewSession(null)}>Close</Button>
-            <Button
-              onClick={() => {
-                void navigator.clipboard.writeText(taskToViewSession.id);
-                setCopiedSessionId(true);
-              }}
-            >
-              {copiedSessionId ? <Check className="size-4" /> : <Copy className="size-4" />}
-              {copiedSessionId ? "Copied" : "Copy ID"}
-            </Button>
           </div>
         </Card>
       </div>

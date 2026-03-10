@@ -1,7 +1,15 @@
 import { PromptInput, PromptSuggestion, PromptSuggestions } from "@/components/ai-elements";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ModelSelectorOption } from "@/components/ai-elements/model-selector";
 import type { PermissionModeValue } from "@/components/ai-elements/permission-mode-selector";
+import { buildCommandPaletteItems } from "@/lib/commands";
+import {
+  getCachedProviderCommandCatalog,
+  getInitialProviderCommandCatalog,
+  setCachedProviderCommandCatalog,
+  toProviderCommandCatalogState,
+  type ProviderCommandCatalogState,
+} from "@/lib/providers/provider-command-catalog";
 import { CLAUDE_SDK_MODEL_OPTIONS, CODEX_SDK_MODEL_OPTIONS, normalizeModelSelection, toHumanModelName } from "@/lib/providers/model-catalog";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
@@ -13,7 +21,11 @@ interface ChatInputProps {
 
 export function ChatInput(args: ChatInputProps = {}) {
   const [focusNonce, setFocusNonce] = useState(0);
+  const [providerCommandCatalog, setProviderCommandCatalog] = useState(() => getCachedProviderCommandCatalog({
+    providerId: "claude-code",
+  }));
   const activeTaskId = useAppStore((state) => state.activeTaskId);
+  const activeWorkspaceId = useAppStore((state) => state.activeWorkspaceId);
   const tasks = useAppStore((state) => state.tasks);
   const messagesByTask = useAppStore((state) => state.messagesByTask);
   const promptDraftByTask = useAppStore((state) => state.promptDraftByTask);
@@ -25,12 +37,15 @@ export function ChatInput(args: ChatInputProps = {}) {
   const openFileFromTree = useAppStore((state) => state.openFileFromTree);
   const settings = useAppStore((state) => state.settings);
   const projectFiles = useAppStore((state) => state.projectFiles);
+  const workspacePathById = useAppStore((state) => state.workspacePathById);
+  const projectPath = useAppStore((state) => state.projectPath);
   const activeTurnIdsByTask = useAppStore((state) => state.activeTurnIdsByTask);
   const providerAvailability = useAppStore((state) => state.providerAvailability);
   const draftProvider = useAppStore((state) => state.draftProvider);
   const abortTaskTurn = useAppStore((state) => state.abortTaskTurn);
   const activeTask = tasks.find((task) => task.id === activeTaskId);
   const activeProvider = activeTask?.provider ?? draftProvider;
+  const workspaceCwd = workspacePathById[activeWorkspaceId] ?? projectPath ?? undefined;
   const permissionMode: PermissionModeValue =
     activeProvider === "claude-code" ? settings.claudePermissionMode : settings.codexApprovalPolicy;
   const providerSelectionTarget = activeTaskId || "draft:session";
@@ -64,6 +79,119 @@ export function ChatInput(args: ChatInputProps = {}) {
       available: providerAvailability.codex,
     })),
   ];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (activeProvider !== "claude-code") {
+      const nextCatalog = getInitialProviderCommandCatalog({ providerId: activeProvider });
+      setProviderCommandCatalog(nextCatalog);
+      setCachedProviderCommandCatalog({
+        providerId: activeProvider,
+        cwd: workspaceCwd,
+        catalog: nextCatalog,
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const getCommandCatalog = window.api?.provider?.getCommandCatalog;
+    if (!getCommandCatalog) {
+      const nextCatalog: ProviderCommandCatalogState = {
+        providerId: activeProvider,
+        status: "error",
+        commands: [],
+        detail: "Provider command catalog API is unavailable in this build.",
+      };
+      setProviderCommandCatalog(nextCatalog);
+      setCachedProviderCommandCatalog({
+        providerId: activeProvider,
+        cwd: workspaceCwd,
+        catalog: nextCatalog,
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const loadingCatalog: ProviderCommandCatalogState = {
+      providerId: activeProvider,
+      status: "loading",
+      commands: [],
+      detail: "Loading Claude native slash commands...",
+    };
+    setProviderCommandCatalog(loadingCatalog);
+    setCachedProviderCommandCatalog({
+      providerId: activeProvider,
+      cwd: workspaceCwd,
+      catalog: loadingCatalog,
+    });
+
+    void getCommandCatalog({
+      providerId: activeProvider,
+      cwd: workspaceCwd,
+      runtimeOptions: {
+        model: settings.modelClaude,
+        claudePermissionMode: settings.claudePermissionMode,
+        claudeAllowDangerouslySkipPermissions: settings.claudeAllowDangerouslySkipPermissions,
+        claudeSandboxEnabled: settings.claudeSandboxEnabled,
+        claudeAllowUnsandboxedCommands: settings.claudeAllowUnsandboxedCommands,
+        claudeEffort: settings.claudeEffort,
+        claudeThinkingMode: settings.claudeThinkingMode,
+      },
+    }).then((response) => {
+      if (cancelled) {
+        return;
+      }
+      const nextCatalog = toProviderCommandCatalogState({
+        providerId: activeProvider,
+        response,
+      });
+      setProviderCommandCatalog(nextCatalog);
+      setCachedProviderCommandCatalog({
+        providerId: activeProvider,
+        cwd: workspaceCwd,
+        catalog: nextCatalog,
+      });
+    }).catch((error) => {
+      if (cancelled) {
+        return;
+      }
+      const nextCatalog = toProviderCommandCatalogState({
+        providerId: activeProvider,
+        error,
+      });
+      setProviderCommandCatalog(nextCatalog);
+      setCachedProviderCommandCatalog({
+        providerId: activeProvider,
+        cwd: workspaceCwd,
+        catalog: nextCatalog,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeProvider,
+    settings.claudeAllowDangerouslySkipPermissions,
+    settings.claudeAllowUnsandboxedCommands,
+    settings.claudeEffort,
+    settings.claudePermissionMode,
+    settings.claudeSandboxEnabled,
+    settings.claudeThinkingMode,
+    settings.modelClaude,
+    workspaceCwd,
+  ]);
+
+  const commandPalette = useMemo(() => buildCommandPaletteItems({
+    provider: activeProvider,
+    settings: {
+      customCommands: settings.customCommands,
+    },
+    providerCommandCatalog,
+  }), [activeProvider, providerCommandCatalog, settings.customCommands]);
 
   return (
     <div
@@ -107,6 +235,8 @@ export function ChatInput(args: ChatInputProps = {}) {
           modelOptions={modelOptions}
           projectFiles={projectFiles}
           attachedFilePath={promptDraft.attachedFilePath}
+          commandPaletteItems={commandPalette.items}
+          commandPaletteProviderNote={commandPalette.providerNote}
           onValueChange={(value) => updatePromptDraft({ taskId: providerSelectionTarget, patch: { text: value } })}
           onModelSelect={({ selection }) => {
             setTaskProvider({ taskId: providerSelectionTarget, provider: selection.providerId });

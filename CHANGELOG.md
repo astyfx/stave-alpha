@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.4 - 2026-03-10
+
+- fixed Claude workspace path anchoring so relative paths like `./docs` stay rooted in the active Stave workspace instead of drifting to guessed sibling directories
+- hardened Claude tool approval and user-input permission responses to always return SDK-safe payloads, preventing the recurring `updatedInput`/`message` Zod failure seen in archived sessions
+- added regression coverage for Claude approval payloads, user-input payloads, and workspace-root system prompt composition
+
 ## 0.0.3 - 2026-03-09
 
 - simplified branding to plain `Stave`, including the window title, app title, and persisted app store key

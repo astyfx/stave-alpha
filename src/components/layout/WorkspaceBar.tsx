@@ -1,9 +1,36 @@
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, FileCode2, FolderTree, GitBranch, GitPullRequest, TerminalSquare } from "lucide-react";
-import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, Input, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
+import { ChevronDown, FileCode2, Folder, FolderTree, GitBranch, GitPullRequest, TerminalSquare } from "lucide-react";
+import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, Input, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, toast } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
 import { WorkspaceIdentityMark } from "@/components/layout/workspace-accent";
+
+function parseGitHubOwnerRepo(remoteUrl: string) {
+  const normalized = remoteUrl.trim().replace(/\.git$/i, "");
+  const sshLikeMatch = normalized.match(/^(?:git@|ssh:\/\/git@)github\.com[:/]([^/]+\/[^/]+)$/i);
+  if (sshLikeMatch?.[1]) {
+    return sshLikeMatch[1];
+  }
+  const httpsLikeMatch = normalized.match(/^https:\/\/github\.com\/([^/]+\/[^/]+)$/i);
+  if (httpsLikeMatch?.[1]) {
+    return httpsLikeMatch[1];
+  }
+  return null;
+}
+
+function formatWorkspacePathLabel(args: { workspacePath?: string; projectPath?: string | null }) {
+  const workspacePath = args.workspacePath?.trim();
+  if (!workspacePath) {
+    return "Workspace Folder";
+  }
+
+  const projectPath = args.projectPath?.trim();
+  if (projectPath && workspacePath.startsWith(`${projectPath}/`)) {
+    return workspacePath.slice(projectPath.length + 1);
+  }
+
+  return workspacePath;
+}
 
 export function WorkspaceBar() {
   const [branchOpen, setBranchOpen] = useState(false);
@@ -20,6 +47,8 @@ export function WorkspaceBar() {
   const workspaceDefaultById = useAppStore((state) => state.workspaceDefaultById);
   const workspaceBranchById = useAppStore((state) => state.workspaceBranchById);
   const workspacePathById = useAppStore((state) => state.workspacePathById);
+  const projectPath = useAppStore((state) => state.projectPath);
+  const defaultBranch = useAppStore((state) => state.defaultBranch);
   const setWorkspaceBranch = useAppStore((state) => state.setWorkspaceBranch);
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
@@ -27,7 +56,11 @@ export function WorkspaceBar() {
   const workspaceName = rawWorkspaceName.toLowerCase() === "default workspace" ? "Default" : rawWorkspaceName;
   const isDefaultWorkspace = Boolean(workspaceDefaultById[activeWorkspaceId]);
 
-  const workspaceCwd = workspacePathById[activeWorkspaceId];
+  const workspaceCwd = workspacePathById[activeWorkspaceId] ?? projectPath ?? undefined;
+  const workspacePathLabel = formatWorkspacePathLabel({
+    workspacePath: workspacePathById[activeWorkspaceId],
+    projectPath,
+  });
   const isTerminalOpen = layout.terminalDocked;
   const isEditorOpen = layout.editorVisible;
 
@@ -65,6 +98,15 @@ export function WorkspaceBar() {
     }
   }, [workspaceBranchById, activeWorkspaceId]);
 
+  useEffect(() => {
+    if (isDefaultWorkspace) {
+      return;
+    }
+    setBranchOpen(false);
+    setBranchFilter("");
+    setNewBranchName("");
+  }, [isDefaultWorkspace]);
+
   const filteredBranches = useMemo(() => {
     const normalized = branchFilter.trim().toLowerCase();
     if (!normalized) {
@@ -100,30 +142,66 @@ export function WorkspaceBar() {
   async function handleOpenPR() {
     const runCommand = window.api?.terminal?.runCommand;
     if (!runCommand) {
+      setBranchError("Terminal bridge unavailable.");
+      toast.error("Unable to open PR", { description: "Terminal bridge unavailable." });
       return;
     }
-    const remoteResult = await runCommand({ command: "git remote get-url origin", cwd: workspaceCwd });
-    if (!remoteResult?.ok) {
-      return;
-    }
-    const remoteUrl = remoteResult.stdout.trim();
+
+    const lookupCwds = [workspaceCwd, projectPath].filter((value, index, array): value is string =>
+      Boolean(value) && array.indexOf(value) === index
+    );
+
     let ownerRepo: string | null = null;
-    const sshMatch = remoteUrl.match(/git@github\.com:([^/]+\/.+?)(?:\.git)?$/);
-    const httpsMatch = remoteUrl.match(/https:\/\/github\.com\/([^/]+\/.+?)(?:\.git)?$/);
-    if (sshMatch) {
-      ownerRepo = sshMatch[1] ?? null;
-    } else if (httpsMatch) {
-      ownerRepo = httpsMatch[1] ?? null;
+    for (const cwd of lookupCwds) {
+      for (const remoteName of ["origin", "upstream"]) {
+        const remoteResult = await runCommand({ command: `git remote get-url ${remoteName}`, cwd });
+        if (!remoteResult?.ok) {
+          continue;
+        }
+        ownerRepo = parseGitHubOwnerRepo(remoteResult.stdout);
+        if (ownerRepo) {
+          break;
+        }
+      }
+      if (ownerRepo) {
+        break;
+      }
     }
+
     if (!ownerRepo) {
+      setBranchError("Could not resolve a GitHub remote for this workspace.");
+      toast.error("Unable to open PR", { description: "GitHub remote not found." });
       return;
     }
+
     const branch = workspaceBranchById[activeWorkspaceId] ?? currentBranch;
     const openExternal = window.api?.shell?.openExternal;
     if (!openExternal) {
+      setBranchError("Shell bridge unavailable.");
+      toast.error("Unable to open PR", { description: "Shell bridge unavailable." });
       return;
     }
-    await openExternal({ url: `https://github.com/${ownerRepo}/compare/${branch}?expand=1` });
+
+    const baseBranch = defaultBranch.trim() || "main";
+    const comparePath = `${encodeURIComponent(baseBranch)}...${encodeURIComponent(branch)}`;
+
+    try {
+      const result = await openExternal({ url: `https://github.com/${ownerRepo}/compare/${comparePath}?expand=1` });
+      if (!result.ok) {
+        setBranchError(result.stderr || "Failed to open GitHub compare view.");
+        toast.error("Unable to open PR", {
+          description: result.stderr || "Failed to open GitHub compare view.",
+        });
+        return;
+      }
+      setBranchError("");
+      toast.success("Opened in browser", {
+        description: "GitHub compare page opened in your default browser.",
+      });
+    } catch {
+      setBranchError("Failed to open GitHub compare view.");
+      toast.error("Unable to open PR", { description: "Failed to open GitHub compare view." });
+    }
   }
 
   async function handleCheckoutBranch(args: { name: string }) {
@@ -147,7 +225,7 @@ export function WorkspaceBar() {
   }
 
   return (
-    <div data-testid="workspace-bar" className="relative z-20 flex h-14 items-center justify-between px-3 py-2.5 text-sm sm:px-4">
+    <div data-testid="workspace-bar" className="relative z-20 flex h-14 items-center justify-between px-3.5 py-2.5 text-sm">
       <div className="flex items-center gap-2 overflow-hidden">
         <TooltipProvider>
           <Tooltip>
@@ -159,78 +237,87 @@ export function WorkspaceBar() {
             </TooltipTrigger>
             <TooltipContent side="bottom">{workspaceName}</TooltipContent>
           </Tooltip>
-          <DropdownMenu open={branchOpen} onOpenChange={setBranchOpen}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    type="button"
-                    className={cn(
-                      "inline-flex h-9 items-center gap-1.5 rounded-md border border-border/80 bg-card/90 px-3 text-sm text-foreground transition-colors hover:bg-secondary/60 disabled:cursor-not-allowed disabled:opacity-50",
-                      branchOpen && "border-primary/70 bg-secondary/80",
-                    )}
-                    disabled={!isDefaultWorkspace}
-                  >
-                    <GitBranch className="size-3.5" />
-                    {currentBranch}
-                    <ChevronDown className="size-3.5" />
-                  </button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {isDefaultWorkspace ? "Switch branch" : "Branch switch disabled for worktree workspace"}
-              </TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="start" sideOffset={8} className="h-[50vh] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto p-2">
-              <Input
-                className="h-9 rounded-md border-background/12 bg-background/8 text-sm text-background placeholder:text-background/45"
-                placeholder="Search branches"
-                value={branchFilter}
-                onChange={(event) => setBranchFilter(event.target.value)}
-              />
-              <div className="mt-2 flex gap-2">
+          {isDefaultWorkspace ? (
+            <DropdownMenu open={branchOpen} onOpenChange={setBranchOpen}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={cn(
+                        "inline-flex h-9 items-center gap-1.5 rounded-md border border-border/80 bg-card/90 px-3 text-sm text-foreground transition-colors hover:bg-secondary/60",
+                        branchOpen && "border-primary/70 bg-secondary/80",
+                      )}
+                    >
+                      <GitBranch className="size-3.5" />
+                      {currentBranch}
+                      <ChevronDown className="size-3.5" />
+                    </button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Switch branch</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="start" sideOffset={8} className="h-[50vh] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto p-2">
                 <Input
                   className="h-9 rounded-md border-background/12 bg-background/8 text-sm text-background placeholder:text-background/45"
-                  placeholder="new-branch-name"
-                  value={newBranchName}
-                  onChange={(event) => setNewBranchName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void handleCreateBranch();
-                    }
-                  }}
+                  placeholder="Search branches"
+                  value={branchFilter}
+                  onChange={(event) => setBranchFilter(event.target.value)}
                 />
-                <Button className="h-9 rounded-md px-3.5 text-sm" disabled={isBusy} onClick={() => void handleCreateBranch()}>
-                  Create
-                </Button>
-              </div>
-              <div className="mt-2 space-y-1 text-sm">
-                {branchError ? <p className="px-2 py-1 text-destructive">{branchError}</p> : null}
-                {filteredBranches.map((branch) => (
-                  <button
-                    key={branch}
-                    type="button"
-                    className={cn(
-                      "w-full rounded-sm px-2 py-2 text-left transition-colors hover:bg-background/10",
-                      branch === currentBranch && "border border-background/12 bg-background/10",
-                    )}
-                    onClick={() => {
-                      void handleCheckoutBranch({ name: branch }).then(() => {
-                        setBranchOpen(false);
-                        setBranchFilter("");
-                      });
+                <div className="mt-2 flex gap-2">
+                  <Input
+                    className="h-9 rounded-md border-background/12 bg-background/8 text-sm text-background placeholder:text-background/45"
+                    placeholder="new-branch-name"
+                    value={newBranchName}
+                    onChange={(event) => setNewBranchName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void handleCreateBranch();
+                      }
                     }}
-                    disabled={isBusy}
-                  >
-                    <p className="font-medium text-background">{branch}</p>
-                    <p className="text-sm text-background/60">{branch === currentBranch ? "Current branch" : "Checkout"}</p>
-                  </button>
-                ))}
-                {!branchError && filteredBranches.length === 0 ? <p className="px-2 py-2 text-background/60">No branches.</p> : null}
-              </div>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  />
+                  <Button className="h-9 rounded-md px-3.5 text-sm" disabled={isBusy} onClick={() => void handleCreateBranch()}>
+                    Create
+                  </Button>
+                </div>
+                <div className="mt-2 space-y-1 text-sm">
+                  {branchError ? <p className="px-2 py-1 text-destructive">{branchError}</p> : null}
+                  {filteredBranches.map((branch) => (
+                    <button
+                      key={branch}
+                      type="button"
+                      className={cn(
+                        "w-full rounded-sm px-2 py-2 text-left transition-colors hover:bg-background/10",
+                        branch === currentBranch && "border border-background/12 bg-background/10",
+                      )}
+                      onClick={() => {
+                        void handleCheckoutBranch({ name: branch }).then(() => {
+                          setBranchOpen(false);
+                          setBranchFilter("");
+                        });
+                      }}
+                      disabled={isBusy}
+                    >
+                      <p className="font-medium text-background">{branch}</p>
+                      <p className="text-sm text-background/60">{branch === currentBranch ? "Current branch" : "Checkout"}</p>
+                    </button>
+                  ))}
+                  {!branchError && filteredBranches.length === 0 ? <p className="px-2 py-2 text-background/60">No branches.</p> : null}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : workspacePathById[activeWorkspaceId] ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="inline-flex h-9 max-w-[min(28rem,42vw)] items-center gap-1.5 truncate rounded-md border border-border/80 bg-card/90 px-3 text-sm text-foreground">
+                  <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{workspacePathLabel}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{workspacePathById[activeWorkspaceId]}</TooltipContent>
+            </Tooltip>
+          ) : null}
           {!isDefaultWorkspace ? (
             <Tooltip>
               <TooltipTrigger asChild>

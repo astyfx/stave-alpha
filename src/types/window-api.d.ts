@@ -1,4 +1,5 @@
 import type { ProviderId } from "@/lib/providers/provider.types";
+import type { ProviderSlashCommand } from "@/lib/providers/provider-command-catalog";
 
 interface ProviderStreamTurnArgs {
   providerId: ProviderId;
@@ -22,12 +23,15 @@ interface ProviderStreamTurnArgs {
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
+    claudeResumeSessionId?: string;
     codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
     codexNetworkAccessEnabled?: boolean;
     codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
     codexPathOverride?: string;
     codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     codexWebSearchMode?: "disabled" | "cached" | "live";
+    codexPlanMode?: boolean;
+    codexResumeThreadId?: string;
   };
 }
 
@@ -76,6 +80,16 @@ interface WindowProviderApi {
   checkAvailability?: (args: { providerId: ProviderId }) => Promise<{
     ok: boolean;
     available: boolean;
+    detail: string;
+  }>;
+  getCommandCatalog?: (args: {
+    providerId: ProviderId;
+    cwd?: string;
+    runtimeOptions?: ProviderStreamTurnArgs["runtimeOptions"];
+  }) => Promise<{
+    ok: boolean;
+    supported: boolean;
+    commands: ProviderSlashCommand[];
     detail: string;
   }>;
 }
@@ -189,6 +203,7 @@ interface WindowPersistenceApi {
   loadWorkspace?: (args: { workspaceId: string }) => Promise<{
     ok: boolean;
     snapshot: {
+      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -214,12 +229,21 @@ interface WindowPersistenceApi {
         promptSuggestions?: string[];
         parts: unknown[];
       }>>;
+      promptDraftByTask?: Record<string, {
+        text: string;
+        attachedFilePath?: string;
+      }>;
+      providerConversationByTask?: Record<string, {
+        "claude-code"?: string;
+        codex?: string;
+      }>;
     } | null;
   }>;
   upsertWorkspace?: (args: {
     id: string;
     name: string;
     snapshot: {
+      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -245,13 +269,34 @@ interface WindowPersistenceApi {
         promptSuggestions?: string[];
         parts: unknown[];
       }>>;
+      promptDraftByTask?: Record<string, {
+        text: string;
+        attachedFilePath?: string;
+      }>;
+      providerConversationByTask?: Record<string, {
+        "claude-code"?: string;
+        codex?: string;
+      }>;
     };
   }) => Promise<{ ok: boolean }>;
   deleteWorkspace?: (args: { workspaceId: string }) => Promise<{ ok: boolean }>;
+  listTaskTurns?: (args: { workspaceId: string; taskId: string; limit?: number }) => Promise<{
+    ok: boolean;
+    turns: Array<{
+      id: string;
+      workspaceId: string;
+      taskId: string;
+      providerId: "claude-code" | "codex";
+      createdAt: string;
+      completedAt: string | null;
+      eventCount: number;
+    }>;
+  }>;
   upsertWorkspaceSync?: (args: {
     id: string;
     name: string;
     snapshot: {
+      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -277,6 +322,14 @@ interface WindowPersistenceApi {
         promptSuggestions?: string[];
         parts: unknown[];
       }>>;
+      promptDraftByTask?: Record<string, {
+        text: string;
+        attachedFilePath?: string;
+      }>;
+      providerConversationByTask?: Record<string, {
+        "claude-code"?: string;
+        codex?: string;
+      }>;
     };
   }) => { ok: boolean };
   listTurnEvents?: (args: { turnId: string; afterSequence?: number; limit?: number }) => Promise<{
@@ -303,9 +356,10 @@ interface WindowApi {
     toggleMaximize?: () => Promise<{ isMaximized: boolean }>;
     close?: () => Promise<void>;
     isMaximized?: () => Promise<{ isMaximized: boolean }>;
+    subscribeZoomChanges?: (listener: (payload: { factor: number; percent: number }) => void) => () => void;
   };
   shell?: {
-    openExternal?: (args: { url: string }) => Promise<{ ok: boolean }>;
+    openExternal?: (args: { url: string }) => Promise<{ ok: boolean; stderr?: string }>;
   };
 }
 

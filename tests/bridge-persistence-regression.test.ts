@@ -108,6 +108,7 @@ describe("workspace persistence fallback", () => {
     expect(loaded?.activeTaskId).toBe("task-1");
     expect(loaded?.tasks).toHaveLength(1);
     expect(loaded?.promptDraftByTask).toEqual({});
+    expect(loaded?.providerConversationByTask).toEqual({});
   });
 });
 
@@ -143,6 +144,7 @@ describe("workspace snapshot schema compatibility", () => {
                   parts: [
                     {
                       type: "tool_use",
+                      toolUseId: "tool-1",
                       toolName: "apply_patch",
                       input: "patch",
                       output: "failed",
@@ -174,6 +176,7 @@ describe("workspace snapshot schema compatibility", () => {
     expect(loaded).not.toBeNull();
     expect(loaded?.messagesByTask["task-1"]?.[0]?.parts[0]).toMatchObject({
       type: "tool_use",
+      toolUseId: "tool-1",
       state: "output-error",
     });
     expect(loaded?.messagesByTask["task-1"]?.[0]?.parts[1]).toMatchObject({
@@ -184,6 +187,7 @@ describe("workspace snapshot schema compatibility", () => {
       text: "draft only",
       attachedFilePath: "",
     });
+    expect(loaded?.providerConversationByTask).toEqual({});
   });
 
   test("loads snapshots that include usage and prompt suggestions", async () => {
@@ -225,6 +229,11 @@ describe("workspace snapshot schema compatibility", () => {
                 },
               ],
             },
+            providerConversationByTask: {
+              "task-2": {
+                "claude-code": "session-live-2",
+              },
+            },
           },
         }),
         upsertWorkspace: async () => ({ ok: true }),
@@ -242,5 +251,56 @@ describe("workspace snapshot schema compatibility", () => {
     expect(loaded?.messagesByTask["task-2"]?.[0]?.promptSuggestions).toEqual([
       "Open a PR with these changes",
     ]);
+    expect(loaded?.providerConversationByTask).toEqual({
+      "task-2": {
+        "claude-code": "session-live-2",
+      },
+    });
+  });
+
+  test("migrates legacy single-provider conversation state into per-provider ids", async () => {
+    setWindowApi({
+      persistence: {
+        listWorkspaces: async () => ({
+          ok: true,
+          rows: [{ id: "legacy", name: "Legacy", updatedAt: "2026-03-10T00:00:00.000Z" }],
+        }),
+        loadWorkspace: async () => ({
+          ok: true,
+          snapshot: {
+            version: 2,
+            activeTaskId: "task-3",
+            tasks: [
+              {
+                id: "task-3",
+                title: "Task 3",
+                provider: "codex",
+                updatedAt: "2026-03-10T00:00:00.000Z",
+                unread: false,
+              },
+            ],
+            messagesByTask: {
+              "task-3": [],
+            },
+            promptDraftByTask: {},
+            providerConversationByTask: {
+              "task-3": {
+                providerId: "codex",
+                nativeConversationId: "thread-legacy-3",
+              },
+            },
+          },
+        }),
+        upsertWorkspace: async () => ({ ok: true }),
+      },
+    });
+
+    const loaded = await loadWorkspaceSnapshot({ workspaceId: "legacy" });
+
+    expect(loaded?.providerConversationByTask).toEqual({
+      "task-3": {
+        codex: "thread-legacy-3",
+      },
+    });
   });
 });

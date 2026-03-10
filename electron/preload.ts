@@ -2,6 +2,13 @@ import { contextBridge, ipcRenderer } from "electron";
 
 type ProviderId = "claude-code" | "codex";
 
+interface ProviderSlashCommand {
+  name: string;
+  command: string;
+  description: string;
+  argumentHint?: string;
+}
+
 interface StreamTurnArgs {
   providerId: ProviderId;
   prompt: string;
@@ -24,12 +31,15 @@ interface StreamTurnArgs {
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
+    claudeResumeSessionId?: string;
     codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
     codexNetworkAccessEnabled?: boolean;
     codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
     codexPathOverride?: string;
     codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     codexWebSearchMode?: "disabled" | "cached" | "live";
+    codexPlanMode?: boolean;
+    codexResumeThreadId?: string;
   };
 }
 
@@ -61,6 +71,13 @@ ipcRenderer.on("provider:stream-event", (_event, payload: StreamEventPayload) =>
   }
 });
 
+const zoomChangeSubscribers = new Set<(payload: { factor: number; percent: number }) => void>();
+ipcRenderer.on("window:zoom-changed", (_event, payload: { factor: number; percent: number }) => {
+  for (const subscriber of zoomChangeSubscribers) {
+    subscriber(payload);
+  }
+});
+
 contextBridge.exposeInMainWorld("api", {
   provider: {
     streamTurn: (args: StreamTurnArgs) => ipcRenderer.invoke("provider:stream-turn", args),
@@ -85,6 +102,16 @@ contextBridge.exposeInMainWorld("api", {
     }) => ipcRenderer.invoke("provider:respond-user-input", args),
     checkAvailability: (args: { providerId: ProviderId }) =>
       ipcRenderer.invoke("provider:check-availability", args),
+    getCommandCatalog: (args: {
+      providerId: ProviderId;
+      cwd?: string;
+      runtimeOptions?: StreamTurnArgs["runtimeOptions"];
+    }) => ipcRenderer.invoke("provider:get-command-catalog", args) as Promise<{
+      ok: boolean;
+      supported: boolean;
+      commands: ProviderSlashCommand[];
+      detail: string;
+    }>,
   },
   persistence: {
     listWorkspaces: () => ipcRenderer.invoke("persistence:list-workspaces"),
@@ -92,6 +119,7 @@ contextBridge.exposeInMainWorld("api", {
     upsertWorkspace: (args: { id: string; name: string; snapshot: unknown }) => ipcRenderer.invoke("persistence:upsert-workspace", args),
     upsertWorkspaceSync: (args: { id: string; name: string; snapshot: unknown }) => ipcRenderer.sendSync("persistence:upsert-workspace-sync", args),
     deleteWorkspace: (args: { workspaceId: string }) => ipcRenderer.invoke("persistence:delete-workspace", args),
+    listTaskTurns: (args: { workspaceId: string; taskId: string; limit?: number }) => ipcRenderer.invoke("persistence:list-task-turns", args),
     listTurnEvents: (args: { turnId: string; afterSequence?: number; limit?: number }) =>
       ipcRenderer.invoke("persistence:list-turn-events", args),
   },
@@ -135,6 +163,12 @@ contextBridge.exposeInMainWorld("api", {
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
     close: () => ipcRenderer.invoke("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    subscribeZoomChanges: (listener: (payload: { factor: number; percent: number }) => void) => {
+      zoomChangeSubscribers.add(listener);
+      return () => {
+        zoomChangeSubscribers.delete(listener);
+      };
+    },
   },
   shell: {
     openExternal: (args: { url: string }) => ipcRenderer.invoke("shell:open-external", args),

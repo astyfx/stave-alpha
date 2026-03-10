@@ -14,6 +14,7 @@ async function loadSqliteStore() {
 
 function createSnapshot(): PersistenceWorkspaceSnapshot {
   return {
+    version: 1,
     activeTaskId: "task-1",
     tasks: [
       {
@@ -116,6 +117,10 @@ describe("SqliteStore", () => {
     expect(replay.map((item) => item.sequence)).toEqual([1, 2]);
     expect(replayFromTwo.map((item) => item.sequence)).toEqual([2]);
     expect(replay.at(-1)?.eventType).toBe("done");
+    expect(reopened.listTurns({ workspaceId: "ws-1", taskId: "task-1" })[0]).toMatchObject({
+      id: turnId,
+      eventCount: 2,
+    });
   });
 
   nativeSqliteTest("enforces unique (turn_id, sequence) idempotency constraint", async () => {

@@ -1,6 +1,7 @@
 import type { ChatMessage, Task } from "@/types/chat";
 import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
 import { parseWorkspaceSnapshot } from "@/lib/task-context/schemas";
+import { CURRENT_WORKSPACE_SNAPSHOT_VERSION } from "@/lib/task-context/workspace-snapshot";
 
 export interface WorkspaceSummary {
   id: string;
@@ -8,11 +9,18 @@ export interface WorkspaceSummary {
   updatedAt: string;
 }
 
+export interface TaskProviderConversationState {
+  "claude-code"?: string;
+  codex?: string;
+}
+
 export interface WorkspaceSnapshot {
+  version: number;
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
   promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+  providerConversationByTask: Record<string, TaskProviderConversationState>;
 }
 
 interface RequiredPersistenceApi {
@@ -143,6 +151,7 @@ export async function upsertWorkspace(args: {
   }
   const normalized: WorkspaceSnapshot = {
     ...validated,
+    version: CURRENT_WORKSPACE_SNAPSHOT_VERSION,
     messagesByTask: normalizeMessagesForSnapshot({ messagesByTask: validated.messagesByTask }),
   };
   const persistence = getPersistenceApi();

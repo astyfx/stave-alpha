@@ -12,14 +12,10 @@ export const settingsSections = [
   { id: "general", label: "General", icon: Cog },
   { id: "theme", label: "Design", icon: Palette },
   { id: "chat", label: "Chat", icon: Bot },
-  { id: "models", label: "Models", icon: Globe },
   { id: "providers", label: "Providers", icon: Wrench },
-  { id: "rules", label: "Rules", icon: ScrollText },
-  { id: "permissions", label: "Permissions", icon: Shield },
   { id: "subagents", label: "Subagent", icon: Wrench },
   { id: "skills", label: "Skills", icon: SearchCheck },
   { id: "commands", label: "Command", icon: KeyRound },
-  { id: "review", label: "Review", icon: SearchCheck },
   { id: "terminal", label: "Terminal", icon: TerminalSquare },
   { id: "editor", label: "Editor", icon: Code2 },
   { id: "developer", label: "Developer", icon: Wrench },
@@ -29,7 +25,7 @@ export type SectionId = (typeof settingsSections)[number]["id"];
 
 export const settingsSectionGroups: Array<{ label: string; ids: SectionId[] }> = [
   { label: "Workspace", ids: ["general", "theme", "editor", "terminal"] },
-  { label: "Agents", ids: ["chat", "models", "providers", "rules", "permissions", "review"] },
+  { label: "Agents", ids: ["chat", "providers"] },
   { label: "Automation", ids: ["subagents", "skills", "commands", "developer"] },
 ];
 
@@ -43,6 +39,16 @@ function readFloat(value: string, fallback: number) {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function formatChatFontSizeLabel(size: "base" | "lg" | "xl") {
+  if (size === "xl") {
+    return "Extra Large · 20px";
+  }
+  if (size === "lg") {
+    return "Large · 18px";
+  }
+  return "Base · 16px";
+}
+
 function formatThemeTokenLabel(token: ThemeTokenName) {
   return token
     .split("-")
@@ -52,15 +58,15 @@ function formatThemeTokenLabel(token: ThemeTokenName) {
 
 function SectionHeading(args: { title: string; description: string }) {
   return (
-    <div className="mb-6">
-      <h3 className="text-3xl font-semibold tracking-tight">{args.title}</h3>
+    <div className="mb-4">
+      <h3 className="text-2xl font-semibold tracking-tight">{args.title}</h3>
       <p className="mt-1 text-sm text-muted-foreground">{args.description}</p>
     </div>
   );
 }
 
 function SectionStack(args: { children: React.ReactNode }) {
-  return <section className="flex flex-col gap-5">{args.children}</section>;
+  return <section className="flex flex-col gap-4">{args.children}</section>;
 }
 
 function SettingsCard(args: {
@@ -71,11 +77,11 @@ function SettingsCard(args: {
 }) {
   return (
     <Card className={cn("border-border/80 bg-card/90 shadow-xs", args.className)}>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2.5">
         <CardTitle className="text-base">{args.title}</CardTitle>
         {args.description ? <CardDescription>{args.description}</CardDescription> : null}
       </CardHeader>
-      <CardContent className="space-y-4">{args.children}</CardContent>
+      <CardContent className="space-y-3.5">{args.children}</CardContent>
     </Card>
   );
 }
@@ -91,7 +97,7 @@ function ChoiceButtons<T extends string>(args: {
       {args.options.map((option) => (
         <Button
           key={option.value}
-          className="h-10 rounded-md"
+          className="h-9 rounded-md"
           variant={args.value === option.value ? "default" : "outline"}
           onClick={() => args.onChange(option.value)}
         >
@@ -108,7 +114,7 @@ function LabeledField(args: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="space-y-1">
         <p className="text-sm font-medium">{args.title}</p>
         {args.description ? <p className="text-sm text-muted-foreground">{args.description}</p> : null}
@@ -417,11 +423,13 @@ function RulesSection() {
 }
 
 function ChatSection() {
-  const [smartSuggestions, chatSendPreview, chatStreamingEnabled] = useAppStore(
+  const [smartSuggestions, chatSendPreview, chatStreamingEnabled, messageFontSize, messageCodeFontSize] = useAppStore(
     useShallow((state) => [
       state.settings.smartSuggestions,
       state.settings.chatSendPreview,
       state.settings.chatStreamingEnabled,
+      state.settings.messageFontSize,
+      state.settings.messageCodeFontSize,
     ] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -431,6 +439,36 @@ function ChatSection() {
       <SectionHeading title="Chat" description="Adjust how the compose box and message stream behave." />
       <SectionStack>
         <SettingsCard title="Chat Defaults" description="These apply to the shared chat surface across tasks.">
+          <LabeledField
+            title="Message Font Size"
+            description="Controls the prose size for chat messages. Tailwind sizes are shown with their exact pixel value."
+          >
+            <ChoiceButtons
+              value={messageFontSize}
+              columns={3}
+              onChange={(value) => updateSettings({ patch: { messageFontSize: value } })}
+              options={[
+                { value: "base", label: formatChatFontSizeLabel("base") },
+                { value: "lg", label: formatChatFontSizeLabel("lg") },
+                { value: "xl", label: formatChatFontSizeLabel("xl") },
+              ]}
+            />
+          </LabeledField>
+          <LabeledField
+            title="Message Code Font Size"
+            description="Controls inline code and code blocks in chat messages. Default is Base · 16px."
+          >
+            <ChoiceButtons
+              value={messageCodeFontSize}
+              columns={3}
+              onChange={(value) => updateSettings({ patch: { messageCodeFontSize: value } })}
+              options={[
+                { value: "base", label: formatChatFontSizeLabel("base") },
+                { value: "lg", label: formatChatFontSizeLabel("lg") },
+                { value: "xl", label: formatChatFontSizeLabel("xl") },
+              ]}
+            />
+          </LabeledField>
           <LabeledField title="Smart Suggestions">
             <ChoiceButtons
               value={smartSuggestions ? "on" : "off"}
@@ -573,9 +611,9 @@ function CommandsSection() {
 
   return (
     <>
-      <SectionHeading title="Command" description="Tune command approvals and custom slash-command mappings." />
+      <SectionHeading title="Command" description="Control Stave-local slash commands and provider passthrough behavior." />
       <SectionStack>
-        <SettingsCard title="Command Defaults" description="Unknown slash commands are sent through to the active provider as native commands.">
+        <SettingsCard title="Command Defaults" description="`/stave:*` commands are handled locally by Stave. Claude-native commands are validated against the current SDK catalog before passthrough; Codex slash commands are still forwarded unchanged.">
           <LabeledField title="Command Policy">
             <ChoiceButtons
               value={commandPolicy}
@@ -595,13 +633,13 @@ function CommandsSection() {
           </LabeledField>
           <LabeledField
             title="Custom Commands"
-            description="One per line. Format: `/name = response` or `/name => response`."
+            description="One per line. Format: `/stave:name = response` or `/stave:name => response`. Legacy `/name` entries are normalized into the Stave namespace."
           >
             <Textarea
               className="min-h-[140px] rounded-md border-border/80 bg-background font-mono text-sm"
               value={customCommands}
               onChange={(event) => updateSettings({ patch: { customCommands: event.target.value } })}
-              placeholder="/clear = @clear&#10;/hello = Hello from {provider} ({model})&#10;/stats = Users: {user_count}, Assistant: {assistant_count}"
+              placeholder="/stave:clear = @clear&#10;/stave:hello = Hello from {provider} ({model})&#10;/stave:stats = Users: {user_count}, Assistant: {assistant_count}"
             />
           </LabeledField>
         </SettingsCard>
@@ -1020,8 +1058,8 @@ function ProvidersSection() {
 }
 
 function DeveloperSection() {
-  const [codexPathOverride, providerDebugStream] = useAppStore(
-    useShallow((state) => [state.settings.codexPathOverride, state.settings.providerDebugStream] as const),
+  const [codexPathOverride, providerDebugStream, turnDiagnosticsVisible] = useAppStore(
+    useShallow((state) => [state.settings.codexPathOverride, state.settings.providerDebugStream, state.settings.turnDiagnosticsVisible] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
 
@@ -1051,6 +1089,20 @@ function DeveloperSection() {
             ]}
           />
         </SettingsCard>
+
+        <SettingsCard
+          title="Turn Diagnostics UI"
+          description="Shows recent persisted provider-turn diagnostics above the active chat session."
+        >
+          <ChoiceButtons
+            value={turnDiagnosticsVisible ? "on" : "off"}
+            onChange={(value) => updateSettings({ patch: { turnDiagnosticsVisible: value === "on" } })}
+            options={[
+              { value: "on", label: "On" },
+              { value: "off", label: "Off" },
+            ]}
+          />
+        </SettingsCard>
       </SectionStack>
     </>
   );
@@ -1064,22 +1116,14 @@ export function SettingsDialogSectionContent(args: { sectionId: SectionId }) {
       return <ThemeSection />;
     case "terminal":
       return <TerminalSection />;
-    case "models":
-      return <ModelsSection />;
-    case "rules":
-      return <RulesSection />;
     case "chat":
       return <ChatSection />;
-    case "permissions":
-      return <PermissionsSection />;
     case "subagents":
       return <SubagentsSection />;
     case "skills":
       return <SkillsSection />;
     case "commands":
       return <CommandsSection />;
-    case "review":
-      return <ReviewSection />;
     case "editor":
       return <EditorSection />;
     case "providers":

@@ -43,6 +43,19 @@ describe("parseNormalizedEvent", () => {
     expect(parsed?.type).toBe("usage");
   });
 
+  test("accepts valid provider conversation event", () => {
+    const parsed = parseNormalizedEvent({
+      payload: {
+        type: "provider_conversation",
+        providerId: "claude-code",
+        nativeConversationId: "session-123",
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("provider_conversation");
+  });
+
   test("accepts valid prompt suggestions event", () => {
     const parsed = parseNormalizedEvent({
       payload: {
@@ -53,6 +66,20 @@ describe("parseNormalizedEvent", () => {
 
     expect(parsed).not.toBeNull();
     expect(parsed?.type).toBe("prompt_suggestions");
+  });
+
+  test("accepts valid partial tool result event", () => {
+    const parsed = parseNormalizedEvent({
+      payload: {
+        type: "tool_result",
+        tool_use_id: "tool-1",
+        output: "running",
+        isPartial: true,
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("tool_result");
   });
 
   test("rejects invalid event", () => {

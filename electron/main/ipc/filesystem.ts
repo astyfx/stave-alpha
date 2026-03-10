@@ -1,6 +1,8 @@
-import { dialog, ipcMain, shell } from "electron";
+import { dialog, ipcMain } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { OpenExternalArgsSchema } from "./schemas";
+import { openExternalWithFallback } from "../utils/external-url";
 import { listFilesRecursive, mimeTypeFromFilePath, resolveRootFilePath, revisionFromStat } from "../utils/filesystem";
 
 export function registerFilesystemHandlers() {
@@ -21,9 +23,12 @@ export function registerFilesystemHandlers() {
     }
   });
 
-  ipcMain.handle("shell:open-external", async (_event, { url }: { url: string }) => {
-    await shell.openExternal(url);
-    return { ok: true };
+  ipcMain.handle("shell:open-external", async (_event, args: unknown) => {
+    const parsed = OpenExternalArgsSchema.safeParse(args);
+    if (!parsed.success) {
+      return { ok: false, stderr: "Invalid external URL request." };
+    }
+    return openExternalWithFallback({ url: parsed.data.url });
   });
 
   ipcMain.handle("fs:list-files", async (_event, args: { rootPath: string }) => {

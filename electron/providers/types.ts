@@ -1,5 +1,19 @@
 export type ProviderId = "claude-code" | "codex";
 
+export interface ProviderSlashCommand {
+  name: string;
+  command: string;
+  description: string;
+  argumentHint?: string;
+}
+
+export interface ProviderCommandCatalogResult {
+  ok: boolean;
+  supported: boolean;
+  commands: ProviderSlashCommand[];
+  detail: string;
+}
+
 export interface StreamTurnArgs {
   providerId: ProviderId;
   prompt: string;
@@ -22,6 +36,7 @@ export interface StreamTurnArgs {
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
+    claudeResumeSessionId?: string;
     codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
     codexNetworkAccessEnabled?: boolean;
     codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
@@ -29,12 +44,14 @@ export interface StreamTurnArgs {
     codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     codexWebSearchMode?: "disabled" | "cached" | "live";
     codexPlanMode?: boolean;
+    codexResumeThreadId?: string;
   };
 }
 
 export type BridgeEvent =
   | { type: "thinking"; text: string; isStreaming?: boolean }
   | { type: "text"; text: string }
+  | { type: "provider_conversation"; providerId: ProviderId; nativeConversationId: string }
   | {
     type: "usage";
     inputTokens: number;
@@ -45,7 +62,7 @@ export type BridgeEvent =
   }
   | { type: "prompt_suggestions"; suggestions: string[] }
   | { type: "tool"; toolUseId?: string; toolName: string; input: string; output?: string; state: "input-streaming" | "input-available" | "output-available" | "output-error" }
-  | { type: "tool_result"; tool_use_id: string; output: string; isError?: boolean }
+  | { type: "tool_result"; tool_use_id: string; output: string; isError?: boolean; isPartial?: boolean }
   | { type: "diff"; filePath: string; oldContent: string; newContent: string; status?: "pending" | "accepted" | "rejected" }
   | { type: "approval"; toolName: string; requestId: string; description: string }
   | {
@@ -91,4 +108,9 @@ export interface ProviderRuntime {
     available: boolean;
     detail: string;
   }>;
+  getCommandCatalog: (args: {
+    providerId: ProviderId;
+    cwd?: string;
+    runtimeOptions?: StreamTurnArgs["runtimeOptions"];
+  }) => Promise<ProviderCommandCatalogResult>;
 }

@@ -141,3 +141,78 @@ export function getRenderableMessageParts(message: Pick<ChatMessage, "content" |
 
   return [{ type: "text", text: message.content }];
 }
+
+export function getLatestUserMessageId(messages: Pick<ChatMessage, "id" | "role">[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      return messages[index]?.id;
+    }
+  }
+  return undefined;
+}
+
+function getMessagePartScrollFingerprint(part: MessagePart): string {
+  switch (part.type) {
+    case "text":
+      return `text:${part.text.length}`;
+    case "thinking":
+      return `thinking:${part.text.length}:${part.isStreaming ? 1 : 0}`;
+    case "tool_use":
+      return `tool:${part.toolName}:${part.state}:${part.input.length}:${part.output?.length ?? 0}`;
+    case "code_diff":
+      return `diff:${part.filePath}:${part.status}:${part.oldContent.length}:${part.newContent.length}`;
+    case "file_context":
+      return `file:${part.filePath}:${part.content.length}:${part.instruction?.length ?? 0}`;
+    case "approval":
+      return `approval:${part.toolName}:${part.state}:${part.description.length}`;
+    case "user_input":
+      return `input:${part.toolName}:${part.state}:${part.questions.length}:${Object.keys(part.answers ?? {}).length}`;
+    case "system_event":
+      return `system:${part.content.length}`;
+  }
+}
+
+export function getMessageScrollFingerprint(message?: Pick<ChatMessage, "id" | "content" | "isStreaming" | "parts">): string {
+  if (!message) {
+    return "empty";
+  }
+
+  const partFingerprint = message.parts.map(getMessagePartScrollFingerprint).join("|");
+  return [
+    message.id,
+    message.content.length,
+    message.isStreaming ? 1 : 0,
+    message.parts.length,
+    partFingerprint,
+  ].join(":");
+}
+
+export function hasVisibleMessagePartContent(part: MessagePart): boolean {
+  if (part.type === "thinking") {
+    return false;
+  }
+  if (part.type === "text") {
+    return part.text.trim().length > 0;
+  }
+  return true;
+}
+
+export type MessageBodyFallbackState = "content" | "streaming-placeholder" | "empty-completed";
+
+export function getMessageBodyFallbackState(args: {
+  isActivelyStreaming: boolean;
+  renderableParts: MessagePart[];
+}): MessageBodyFallbackState {
+  const reasoningParts = args.renderableParts.filter((part) => part.type === "thinking");
+  const visibleParts = args.renderableParts.filter(hasVisibleMessagePartContent);
+
+  if (args.isActivelyStreaming && visibleParts.length === 0 && reasoningParts.length === 0) {
+    return "streaming-placeholder";
+  }
+
+  if (!args.isActivelyStreaming && visibleParts.length === 0 && reasoningParts.length === 0) {
+    return "empty-completed";
+  }
+
+  return "content";
+}

@@ -30,10 +30,7 @@ export function getTaskCounts(args: { tasks: Array<Pick<Task, "archivedAt">> }) 
 
 export function getArchiveFallbackTaskId(args: { tasks: Task[]; archivedTaskId: string }) {
   const activeFallback = args.tasks.find((task) => task.id !== args.archivedTaskId && !isTaskArchived(task));
-  if (activeFallback) {
-    return activeFallback.id;
-  }
-  return args.tasks.find((task) => task.id !== args.archivedTaskId)?.id ?? "";
+  return activeFallback?.id ?? "";
 }
 
 export function formatTaskUpdatedAt(args: { value: string; now?: number | Date }) {

@@ -2,9 +2,16 @@ import type { CodeDiffPart, ToolUsePart, UserInputQuestion } from "@/types/chat"
 
 export type ProviderId = "claude-code" | "codex";
 
+export interface ProviderCommandCatalogRequest {
+  providerId: ProviderId;
+  cwd?: string;
+  runtimeOptions?: ProviderTurnRequest["runtimeOptions"];
+}
+
 export type NormalizedProviderEvent =
   | { type: "thinking"; text: string; isStreaming?: boolean }
   | { type: "text"; text: string }
+  | { type: "provider_conversation"; providerId: ProviderId; nativeConversationId: string }
   | {
     type: "usage";
     inputTokens: number;
@@ -15,7 +22,7 @@ export type NormalizedProviderEvent =
   }
   | { type: "prompt_suggestions"; suggestions: string[] }
   | { type: "tool"; toolUseId?: string; toolName: string; input: string; output?: string; state: ToolUsePart["state"] }
-  | { type: "tool_result"; tool_use_id: string; output: string; isError?: boolean }
+  | { type: "tool_result"; tool_use_id: string; output: string; isError?: boolean; isPartial?: boolean }
   | { type: "diff"; filePath: string; oldContent: string; newContent: string; status?: CodeDiffPart["status"] }
   | { type: "approval"; toolName: string; requestId: string; description: string }
   | { type: "user_input"; toolName: string; requestId: string; questions: UserInputQuestion[] }
@@ -45,6 +52,7 @@ export interface ProviderTurnRequest {
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
+    claudeResumeSessionId?: string;
     codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
     codexNetworkAccessEnabled?: boolean;
     codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
@@ -52,6 +60,7 @@ export interface ProviderTurnRequest {
     codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     codexWebSearchMode?: "disabled" | "cached" | "live";
     codexPlanMode?: boolean;
+    codexResumeThreadId?: string;
   };
 }
 

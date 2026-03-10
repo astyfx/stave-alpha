@@ -2,47 +2,72 @@ import { ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { providerRuntime } from "../../providers/runtime";
 import type { StreamTurnArgs } from "../../providers/types";
+import {
+  ApprovalResponseArgsSchema,
+  CleanupTaskArgsSchema,
+  ProviderCommandCatalogArgsSchema,
+  ProviderIdSchema,
+  StreamReadArgsSchema,
+  StreamTurnArgsSchema,
+  UserInputResponseArgsSchema,
+} from "./schemas";
 import { ensurePersistenceReady } from "../state";
 import { isDoneEvent, toEventType } from "../utils/provider-events";
 
 export function registerProviderHandlers() {
-  ipcMain.handle("provider:stream-turn", async (_event, args: StreamTurnArgs) => {
-    return providerRuntime.streamTurn(args);
+  ipcMain.handle("provider:stream-turn", async (_event, args: unknown) => {
+    const parsedArgs = StreamTurnArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return [
+        { type: "error", message: "Invalid provider request.", recoverable: false },
+        { type: "done" },
+      ];
+    }
+    return providerRuntime.streamTurn(parsedArgs.data as StreamTurnArgs);
   });
 
-  ipcMain.handle("provider:start-stream-turn", (_event, args: StreamTurnArgs) => {
-    return providerRuntime.startTurnStream(args);
+  ipcMain.handle("provider:start-stream-turn", (_event, args: unknown) => {
+    const parsedArgs = StreamTurnArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, streamId: "" };
+    }
+    return providerRuntime.startTurnStream(parsedArgs.data as StreamTurnArgs);
   });
 
-  ipcMain.handle("provider:start-push-turn", async (event, args: StreamTurnArgs) => {
+  ipcMain.handle("provider:start-push-turn", async (event, args: unknown) => {
+    const parsedArgs = StreamTurnArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, streamId: "", turnId: null };
+    }
+    const safeArgs = parsedArgs.data as StreamTurnArgs;
     const turnId = randomUUID();
     const sender = event.sender;
     const store = await ensurePersistenceReady();
     let sequence = 0;
     let completed = false;
 
-    if (args.taskId) {
+    if (safeArgs.taskId) {
       try {
         store.beginTurn({
           id: turnId,
-          workspaceId: args.workspaceId ?? "default",
-          taskId: args.taskId,
-          providerId: args.providerId,
+          workspaceId: safeArgs.workspaceId ?? "default",
+          taskId: safeArgs.taskId,
+          providerId: safeArgs.providerId,
         });
       } catch (error) {
         console.warn("[provider:persistence] failed to begin turn", error, {
           turnId,
-          providerId: args.providerId,
-          taskId: args.taskId,
-          workspaceId: args.workspaceId ?? null,
+          providerId: safeArgs.providerId,
+          taskId: safeArgs.taskId,
+          workspaceId: safeArgs.workspaceId ?? null,
         });
       }
     }
 
-    const started = providerRuntime.startTurnStream(args, {
+    const started = providerRuntime.startTurnStream(safeArgs, {
       onEvent: (turnEvent) => {
         sequence += 1;
-        if (args.taskId) {
+        if (safeArgs.taskId) {
           try {
             store.appendTurnEvent({
               id: randomUUID(),
@@ -55,8 +80,8 @@ export function registerProviderHandlers() {
             console.warn("[provider:persistence] failed to append turn event", error, {
               turnId,
               sequence,
-              providerId: args.providerId,
-              taskId: args.taskId,
+              providerId: safeArgs.providerId,
+              taskId: safeArgs.taskId,
               eventType: toEventType({ event: turnEvent }),
             });
           }
@@ -67,81 +92,111 @@ export function registerProviderHandlers() {
             event: turnEvent,
             sequence,
             done: isDoneEvent({ event: turnEvent }),
-            taskId: args.taskId ?? null,
-            workspaceId: args.workspaceId ?? null,
-            providerId: args.providerId,
-            turnId: args.taskId ? turnId : null,
+            taskId: safeArgs.taskId ?? null,
+            workspaceId: safeArgs.workspaceId ?? null,
+            providerId: safeArgs.providerId,
+            turnId: safeArgs.taskId ? turnId : null,
           });
         } catch (error) {
           console.warn("[provider:stream] failed to forward event to renderer", error, {
             turnId,
             sequence,
-            providerId: args.providerId,
-            taskId: args.taskId ?? null,
+            providerId: safeArgs.providerId,
+            taskId: safeArgs.taskId ?? null,
             eventType: toEventType({ event: turnEvent }),
           });
         }
       },
       onDone: () => {
-        if (!completed && args.taskId) {
+        if (!completed && safeArgs.taskId) {
           completed = true;
           try {
             store.completeTurn({ id: turnId });
           } catch (error) {
             console.warn("[provider:persistence] failed to complete turn", error, {
               turnId,
-              providerId: args.providerId,
-              taskId: args.taskId,
+              providerId: safeArgs.providerId,
+              taskId: safeArgs.taskId,
             });
           }
         }
       },
     });
 
-    return { ok: true, streamId: started.streamId, turnId: args.taskId ? turnId : null };
+    return { ok: true, streamId: started.streamId, turnId: safeArgs.taskId ? turnId : null };
   });
 
-  ipcMain.handle("provider:read-stream-turn", (_event, args: { streamId: string; cursor: number }) => {
-    return providerRuntime.readTurnStream(args);
+  ipcMain.handle("provider:read-stream-turn", (_event, args: unknown) => {
+    const parsedArgs = StreamReadArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, events: [], cursor: 0, done: true, message: "Invalid stream read request." };
+    }
+    return providerRuntime.readTurnStream(parsedArgs.data);
   });
 
-  ipcMain.handle("provider:abort-turn", (_event, args: { providerId: "claude-code" | "codex" }) => {
-    return providerRuntime.abortTurn({ providerId: args.providerId });
+  ipcMain.handle("provider:abort-turn", (_event, args: unknown) => {
+    const parsedProviderId = ProviderIdSchema.safeParse((args as { providerId?: unknown })?.providerId);
+    if (!parsedProviderId.success) {
+      return { ok: false, message: "Invalid provider abort request." };
+    }
+    return providerRuntime.abortTurn({ providerId: parsedProviderId.data });
   });
 
-  ipcMain.handle("provider:cleanup-task", (_event, args: { taskId: string }) => {
-    return providerRuntime.cleanupTask({ taskId: args.taskId });
+  ipcMain.handle("provider:cleanup-task", (_event, args: unknown) => {
+    const parsedArgs = CleanupTaskArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, message: "Invalid task cleanup request." };
+    }
+    return providerRuntime.cleanupTask({ taskId: parsedArgs.data.taskId });
   });
 
-  ipcMain.handle("provider:respond-approval", (_event, args: {
-    providerId: "claude-code" | "codex";
-    requestId: string;
-    approved: boolean;
-  }) => {
+  ipcMain.handle("provider:respond-approval", (_event, args: unknown) => {
+    const parsedArgs = ApprovalResponseArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, message: "Invalid approval response request." };
+    }
     return providerRuntime.respondApproval({
-      providerId: args.providerId,
-      requestId: args.requestId,
-      approved: args.approved,
+      providerId: parsedArgs.data.providerId,
+      requestId: parsedArgs.data.requestId,
+      approved: parsedArgs.data.approved,
     });
   });
 
-  ipcMain.handle("provider:respond-user-input", (_event, args: {
-    providerId: "claude-code" | "codex";
-    requestId: string;
-    answers?: Record<string, string>;
-    denied?: boolean;
-  }) => {
+  ipcMain.handle("provider:respond-user-input", (_event, args: unknown) => {
+    const parsedArgs = UserInputResponseArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return { ok: false, message: "Invalid user-input response request." };
+    }
     return providerRuntime.respondUserInput({
-      providerId: args.providerId,
-      requestId: args.requestId,
-      answers: args.answers,
-      denied: args.denied,
+      providerId: parsedArgs.data.providerId,
+      requestId: parsedArgs.data.requestId,
+      answers: parsedArgs.data.answers,
+      denied: parsedArgs.data.denied,
     });
   });
 
-  ipcMain.handle("provider:check-availability", (_event, args: {
-    providerId: "claude-code" | "codex";
-  }) => {
-    return providerRuntime.checkAvailability({ providerId: args.providerId });
+  ipcMain.handle("provider:check-availability", (_event, args: unknown) => {
+    const parsedProviderId = ProviderIdSchema.safeParse((args as { providerId?: unknown })?.providerId);
+    if (!parsedProviderId.success) {
+      return { ok: false, available: false, detail: "Invalid provider availability request." };
+    }
+    return providerRuntime.checkAvailability({ providerId: parsedProviderId.data });
+  });
+
+  ipcMain.handle("provider:get-command-catalog", (_event, args: unknown) => {
+    const parsedArgs = ProviderCommandCatalogArgsSchema.safeParse(args);
+    if (!parsedArgs.success) {
+      return {
+        ok: false,
+        supported: false,
+        commands: [],
+        detail: "Invalid provider command catalog request.",
+      };
+    }
+    return providerRuntime.getCommandCatalog({
+      providerId: parsedArgs.data.providerId,
+      cwd: parsedArgs.data.cwd,
+      runtimeOptions: parsedArgs.data.runtimeOptions,
+    });
   });
 }

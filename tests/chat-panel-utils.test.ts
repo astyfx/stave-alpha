@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { getRenderableMessageParts, groupMessageParts, isPendingDiffStatus, summarizeDiffLineChanges } from "@/components/session/chat-panel.utils";
+import {
+  getLatestUserMessageId,
+  getMessageBodyFallbackState,
+  getMessageScrollFingerprint,
+  getRenderableMessageParts,
+  groupMessageParts,
+  isPendingDiffStatus,
+  summarizeDiffLineChanges,
+} from "@/components/session/chat-panel.utils";
 
 describe("isPendingDiffStatus", () => {
   test("returns true only for pending diffs", () => {
@@ -22,6 +30,59 @@ describe("getRenderableMessageParts", () => {
       content: "Ignored content",
       parts: [{ type: "text", text: "Structured part" }],
     })).toEqual([{ type: "text", text: "Structured part" }]);
+  });
+});
+
+describe("getLatestUserMessageId", () => {
+  test("returns the newest user message id", () => {
+    expect(getLatestUserMessageId([
+      { id: "assistant-1", role: "assistant" },
+      { id: "user-1", role: "user" },
+      { id: "assistant-2", role: "assistant" },
+      { id: "user-2", role: "user" },
+    ])).toBe("user-2");
+  });
+
+  test("returns undefined when there is no user message", () => {
+    expect(getLatestUserMessageId([
+      { id: "assistant-1", role: "assistant" },
+    ])).toBeUndefined();
+  });
+});
+
+describe("getMessageScrollFingerprint", () => {
+  test("changes when streaming text grows", () => {
+    const initial = getMessageScrollFingerprint({
+      id: "assistant-1",
+      content: "hello",
+      isStreaming: true,
+      parts: [{ type: "text", text: "hello" }],
+    });
+    const updated = getMessageScrollFingerprint({
+      id: "assistant-1",
+      content: "hello world",
+      isStreaming: true,
+      parts: [{ type: "text", text: "hello world" }],
+    });
+
+    expect(updated).not.toBe(initial);
+  });
+
+  test("changes when tool output or state changes", () => {
+    const initial = getMessageScrollFingerprint({
+      id: "assistant-1",
+      content: "",
+      isStreaming: true,
+      parts: [{ type: "tool_use", toolName: "bash", input: "ls", output: "a", state: "input-streaming" }],
+    });
+    const updated = getMessageScrollFingerprint({
+      id: "assistant-1",
+      content: "",
+      isStreaming: true,
+      parts: [{ type: "tool_use", toolName: "bash", input: "ls", output: "a\nb", state: "output-available" }],
+    });
+
+    expect(updated).not.toBe(initial);
   });
 });
 
@@ -94,5 +155,35 @@ describe("groupMessageParts", () => {
       "other",
       "other",
     ]);
+  });
+});
+
+describe("getMessageBodyFallbackState", () => {
+  test("shows streaming placeholder only for actively streaming empty turns", () => {
+    expect(getMessageBodyFallbackState({
+      isActivelyStreaming: true,
+      renderableParts: [],
+    })).toBe("streaming-placeholder");
+  });
+
+  test("treats reasoning-only turns as content", () => {
+    expect(getMessageBodyFallbackState({
+      isActivelyStreaming: true,
+      renderableParts: [{ type: "thinking", text: "step", isStreaming: true }],
+    })).toBe("content");
+  });
+
+  test("treats tool-only turns as content", () => {
+    expect(getMessageBodyFallbackState({
+      isActivelyStreaming: true,
+      renderableParts: [{ type: "tool_use", toolName: "bash", input: "ls", state: "input-streaming", output: "file.txt" }],
+    })).toBe("content");
+  });
+
+  test("shows empty completed fallback only for truly empty completed turns", () => {
+    expect(getMessageBodyFallbackState({
+      isActivelyStreaming: false,
+      renderableParts: [],
+    })).toBe("empty-completed");
   });
 });

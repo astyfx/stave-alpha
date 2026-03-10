@@ -3,12 +3,14 @@ import type { Thread, ThreadEvent, ThreadItem, TurnCompletedEvent, TurnOptions }
 import { resolveExecutablePath } from "./executable-path";
 import { createTurnDiffTracker } from "./turn-diff-tracker";
 import { toText } from "./utils";
+import { extractProposedPlanText, startsWithProposedPlan } from "../../src/lib/providers/plan-response";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { accessSync, constants } from "node:fs";
 import path from "node:path";
 
 const threadByTask = new Map<string, Thread>();
+const threadIdByTask = new Map<string, string>();
 
 function parseBooleanEnv(args: { value: string | undefined; fallback: boolean }) {
   const normalized = args.value?.trim().toLowerCase();
@@ -104,6 +106,44 @@ function buildCodexDiagnostics(args: { executablePath: string; taskId?: string }
   };
 }
 
+function buildThreadKey(args: {
+  taskId?: string;
+  cwd: string;
+  runtimeOptions?: StreamTurnArgs["runtimeOptions"];
+}) {
+  const networkAccessEnabled = args.runtimeOptions?.codexNetworkAccessEnabled
+    ?? parseBooleanEnv({
+      value: process.env.STAVE_CODEX_NETWORK_ACCESS,
+      fallback: true,
+    });
+  const sandboxMode = resolveSandboxMode({
+    runtimeValue: args.runtimeOptions?.codexSandboxMode,
+    envValue: process.env.STAVE_CODEX_SANDBOX_MODE?.trim(),
+    fallback: "workspace-write",
+  });
+  const approvalPolicy = resolveApprovalPolicy({
+    runtimeValue: args.runtimeOptions?.codexApprovalPolicy,
+    envValue: process.env.STAVE_CODEX_APPROVAL_POLICY?.trim(),
+  });
+  const model = args.runtimeOptions?.model?.trim() || "model-default";
+  const modelReasoningEffort = args.runtimeOptions?.codexModelReasoningEffort ?? "effort-default";
+  const webSearchMode = args.runtimeOptions?.codexWebSearchMode ?? "websearch-default";
+
+  return `${args.taskId ?? "default"}:${args.cwd}:${sandboxMode}:${networkAccessEnabled ? "net1" : "net0"}:${approvalPolicy ?? "approval-default"}:${model}:${modelReasoningEffort}:${webSearchMode}:${args.runtimeOptions?.codexPlanMode ? "plan1" : "plan0"}`;
+}
+
+function resolveThreadId(args: { threadKey: string; fallbackThreadId?: string }) {
+  return threadIdByTask.get(args.threadKey) ?? args.fallbackThreadId?.trim();
+}
+
+function rememberThreadId(args: { threadKey: string; threadId?: string }) {
+  const nextThreadId = args.threadId?.trim();
+  if (!nextThreadId) {
+    return;
+  }
+  threadIdByTask.set(args.threadKey, nextThreadId);
+}
+
 function parseVersionFromStdout(args: { stdout: string }) {
   const match = args.stdout.match(/(\d+)\.(\d+)\.(\d+)/);
   if (!match) {
@@ -185,7 +225,18 @@ const codexItemTextLength = new Map<string, number>();
 const codexItemLastEmitTime = new Map<string, number>();
 const CODEX_OUTPUT_THROTTLE_MS = 200;
 
-function mapCodexItemEvent(args: {
+function buildCodexTodoToolInput(args: {
+  items: Array<{ text?: string; completed?: boolean }>;
+}) {
+  return JSON.stringify({
+    todos: args.items.map((item) => ({
+      content: item.text ?? "",
+      status: item.completed ? "completed" : "pending",
+    })),
+  });
+}
+
+export function mapCodexItemEvent(args: {
   lifecycle: "item.started" | "item.updated" | "item.completed";
   item: ThreadItem;
 }): BridgeEvent[] {
@@ -193,10 +244,8 @@ function mapCodexItemEvent(args: {
   const itemId = (item as { id?: string }).id ?? "";
   const messageText = (item.type === "agent_message" || item.type === "reasoning") ? (item.text ?? "") : "";
   const trimmedMessageText = messageText.trim();
-  const isPlanResponse = trimmedMessageText.startsWith("<proposed_plan>") && trimmedMessageText.endsWith("</proposed_plan>");
-  const extractedPlanText = isPlanResponse
-    ? trimmedMessageText.slice("<proposed_plan>".length, trimmedMessageText.lastIndexOf("</proposed_plan>")).trim()
-    : "";
+  const extractedPlanText = extractProposedPlanText({ text: trimmedMessageText });
+  const isPlanResponse = extractedPlanText !== null;
 
   switch (item.type) {
     case "agent_message": {
@@ -215,7 +264,7 @@ function mapCodexItemEvent(args: {
       // Skip streaming if the text looks like it's starting a plan response
       // to avoid showing raw XML that will later become a plan card.
       const full = item.text ?? "";
-      if (!full || full.trimStart().startsWith("<proposed_plan>")) return [];
+      if (!full || startsWithProposedPlan({ text: full })) return [];
       const prev = codexItemTextLength.get(itemId) ?? 0;
       const delta = full.slice(prev);
       if (!delta) return [];
@@ -228,7 +277,7 @@ function mapCodexItemEvent(args: {
         codexItemTextLength.delete(itemId);
         const full = item.text ?? "";
         const delta = full.slice(prev);
-        return delta ? [{ type: "thinking", text: delta, isStreaming: false }] : [];
+        return [{ type: "thinking", text: delta, isStreaming: false }];
       }
       // item.started / item.updated — emit delta for streaming
       const full = item.text ?? "";
@@ -264,6 +313,7 @@ function mapCodexItemEvent(args: {
             type: "tool_result",
             tool_use_id: itemId,
             output: item.aggregated_output,
+            isPartial: true,
           });
         }
       }
@@ -365,15 +415,18 @@ function mapCodexItemEvent(args: {
       }
       return [];
     }
-    case "todo_list":
-      if (lifecycle !== "item.completed") return [];
+    case "todo_list": {
+      const input = buildCodexTodoToolInput({ items: item.items ?? [] });
       return [{
-        type: "thinking",
-        text: `Todo:\n${(item.items ?? [])
-          .map((todo) => `- [${todo.completed ? "x" : " "}] ${todo.text ?? ""}`)
-          .join("\n")}`,
-        isStreaming: false,
+        type: "tool",
+        ...(itemId ? { toolUseId: itemId } : {}),
+        toolName: "TodoWrite",
+        input,
+        ...(lifecycle === "item.completed"
+          ? { state: "output-available" as const }
+          : { state: "input-streaming" as const }),
       }];
+    }
     case "error":
       return [{ type: "error", message: item.message ?? "Codex item error.", recoverable: false }];
     default:
@@ -401,15 +454,20 @@ function ensureThread(args: {
     runtimeValue: args.runtimeOptions?.codexApprovalPolicy,
     envValue: process.env.STAVE_CODEX_APPROVAL_POLICY?.trim(),
   });
-  const model = args.runtimeOptions?.model?.trim() || "model-default";
-  const modelReasoningEffort = args.runtimeOptions?.codexModelReasoningEffort ?? "effort-default";
-  const webSearchMode = args.runtimeOptions?.codexWebSearchMode ?? "websearch-default";
-  const threadKey = `${args.taskId ?? "default"}:${args.cwd}:${sandboxMode}:${networkAccessEnabled ? "net1" : "net0"}:${approvalPolicy ?? "approval-default"}:${model}:${modelReasoningEffort}:${webSearchMode}:${args.runtimeOptions?.codexPlanMode ? "plan1" : "plan0"}`;
+  const threadKey = buildThreadKey({
+    taskId: args.taskId,
+    cwd: args.cwd,
+    runtimeOptions: args.runtimeOptions,
+  });
   const existing = threadByTask.get(threadKey);
   if (existing) {
     return existing;
   }
-  const thread = args.codex.startThread({
+  const resumeThreadId = resolveThreadId({
+    threadKey,
+    fallbackThreadId: args.runtimeOptions?.codexResumeThreadId,
+  });
+  const threadOptions = {
     ...(args.runtimeOptions?.model ? { model: args.runtimeOptions.model } : {}),
     workingDirectory: args.cwd,
     sandboxMode,
@@ -417,7 +475,11 @@ function ensureThread(args: {
     ...(args.runtimeOptions?.codexModelReasoningEffort ? { modelReasoningEffort: args.runtimeOptions.codexModelReasoningEffort } : {}),
     ...(args.runtimeOptions?.codexWebSearchMode ? { webSearchMode: args.runtimeOptions.codexWebSearchMode } : {}),
     ...(approvalPolicy ? { approvalPolicy } : {}),
-  });
+  };
+  const thread = resumeThreadId
+    ? args.codex.resumeThread(resumeThreadId, threadOptions)
+    : args.codex.startThread(threadOptions);
+  rememberThreadId({ threadKey, threadId: resumeThreadId });
   threadByTask.set(threadKey, thread);
   return thread;
 }
@@ -427,6 +489,11 @@ export function cleanupCodexTask(taskId: string) {
   for (const threadKey of threadByTask.keys()) {
     if (threadKey.startsWith(keyPrefix)) {
       threadByTask.delete(threadKey);
+    }
+  }
+  for (const threadKey of threadIdByTask.keys()) {
+    if (threadKey.startsWith(keyPrefix)) {
+      threadIdByTask.delete(threadKey);
     }
   }
 }
@@ -461,6 +528,11 @@ export async function streamCodexWithSdk(args: StreamTurnArgs & {
       ...(codexExecutablePath ? { codexPathOverride: codexExecutablePath } : {}),
       env: buildCodexEnv(),
       ...(codexPlanMode ? { config: { collaboration_mode: true } } : {}),
+    });
+    const threadKey = buildThreadKey({
+      taskId: args.taskId,
+      cwd: runtimeCwd,
+      runtimeOptions: args.runtimeOptions,
     });
     const thread = ensureThread({
       codex,
@@ -548,6 +620,16 @@ export async function streamCodexWithSdk(args: StreamTurnArgs & {
           args.onEvent?.(events[events.length - 1]!);
           break;
         case "thread.started":
+          rememberThreadId({
+            threadKey,
+            threadId: threadEvent.thread_id,
+          });
+          events.push({
+            type: "provider_conversation",
+            providerId: "codex",
+            nativeConversationId: threadEvent.thread_id,
+          });
+          args.onEvent?.(events[events.length - 1]!);
           break;
         default:
           if (codexDebug) {

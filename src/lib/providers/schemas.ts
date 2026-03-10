@@ -11,6 +11,12 @@ const TextEventSchema = z.object({
   text: z.string(),
 });
 
+const ProviderConversationEventSchema = z.object({
+  type: z.literal("provider_conversation"),
+  providerId: z.union([z.literal("claude-code"), z.literal("codex")]),
+  nativeConversationId: z.string(),
+});
+
 const UsageEventSchema = z.object({
   type: z.literal("usage"),
   inputTokens: z.number(),
@@ -46,6 +52,7 @@ const ToolResultEventSchema = z.object({
   tool_use_id: z.string(),
   output: z.string(),
   isError: z.boolean().optional(),
+  isPartial: z.boolean().optional(),
 });
 
 const DiffStatusSchema = z.union([
@@ -110,6 +117,7 @@ const DoneEventSchema = z.object({
 export const NormalizedProviderEventSchema = z.discriminatedUnion("type", [
   ThinkingEventSchema,
   TextEventSchema,
+  ProviderConversationEventSchema,
   UsageEventSchema,
   PromptSuggestionsEventSchema,
   ToolEventSchema,

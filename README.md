@@ -124,6 +124,13 @@ Claude-specific runtime controls come from the UI and runtime options:
 - provider timeout
 - debug stream logging
 
+Claude path and approval handling:
+
+- Stave runs Claude with the active workspace `cwd`.
+- Stave appends workspace-root guidance to Claude's system prompt so relative paths like `./docs` resolve under the active workspace root.
+- If the user intentionally targets a path outside the workspace root, Claude should request approval for that exact path instead of guessing a nearby absolute path.
+- Stave validates Claude permission callback payloads before returning them to the SDK so malformed allow/deny responses fail closed instead of surfacing as `ZodError` tool-permission crashes.
+
 ## How Codex SDK works in Stave
 
 Codex turns are handled in `electron/providers/codex-sdk-runtime.ts`.

@@ -1,0 +1,147 @@
+import type {
+  ApprovalPart,
+  ChatMessage,
+  MessagePart,
+  ToolUsePart,
+  UserInputPart,
+} from "@/types/chat";
+
+type ToolResultEvent = {
+  tool_use_id: string;
+  output: string;
+  isError?: boolean;
+  isPartial?: boolean;
+};
+
+export function hasRenderableAssistantPart(part: MessagePart): boolean {
+  if (part.type === "text") {
+    return part.text.trim().length > 0;
+  }
+  if (part.type === "system_event") {
+    return part.content.trim().length > 0;
+  }
+  if (part.type === "thinking") {
+    return part.text.trim().length > 0;
+  }
+  return true;
+}
+
+export function hasRenderableAssistantContent(args: {
+  message: Pick<ChatMessage, "content" | "parts" | "isPlanResponse">;
+}): boolean {
+  return (
+    args.message.content.trim().length > 0
+    || args.message.parts.some(hasRenderableAssistantPart)
+    || args.message.isPlanResponse === true
+  );
+}
+
+export function mergePromptSuggestions(args: {
+  existing?: string[];
+  incoming: string[];
+}): string[] {
+  const merged = [...(args.existing ?? [])];
+
+  for (const suggestion of args.incoming) {
+    if (!merged.includes(suggestion)) {
+      merged.push(suggestion);
+    }
+  }
+
+  return merged;
+}
+
+export function mergeToolResultIntoPart(args: {
+  part: MessagePart;
+  event: ToolResultEvent;
+}): MessagePart {
+  const { part, event } = args;
+
+  if (part.type !== "tool_use" || part.toolUseId !== event.tool_use_id) {
+    return part;
+  }
+
+  if (event.isError) {
+    return {
+      ...part,
+      output: event.output,
+      state: "output-error",
+    };
+  }
+
+  const nextState: ToolUsePart["state"] = event.isPartial
+    ? (part.state === "input-available" ? "input-streaming" : part.state)
+    : "output-available";
+
+  return {
+    ...part,
+    output: event.output,
+    state: nextState,
+  };
+}
+
+export function findLatestPendingApprovalPart(args: {
+  message?: Pick<ChatMessage, "parts">;
+}): ApprovalPart | undefined {
+  const parts = args.message?.parts ?? [];
+
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part?.type === "approval" && part.state === "approval-requested") {
+      return part;
+    }
+  }
+
+  return undefined;
+}
+
+export function findLatestPendingUserInputPart(args: {
+  message?: Pick<ChatMessage, "parts">;
+}): UserInputPart | undefined {
+  const parts = args.message?.parts ?? [];
+
+  for (let index = parts.length - 1; index >= 0; index -= 1) {
+    const part = parts[index];
+    if (part?.type === "user_input" && part.state === "input-requested") {
+      return part;
+    }
+  }
+
+  return undefined;
+}
+
+export function updateApprovalPartsByRequestId(args: {
+  parts: MessagePart[];
+  requestId: string;
+  approved: boolean;
+}): MessagePart[] {
+  return args.parts.map((part) => {
+    if (part.type !== "approval" || part.requestId !== args.requestId) {
+      return part;
+    }
+
+    return {
+      ...part,
+      state: args.approved ? "approval-responded" : "output-denied",
+    };
+  });
+}
+
+export function updateUserInputPartsByRequestId(args: {
+  parts: MessagePart[];
+  requestId: string;
+  answers?: Record<string, string>;
+  denied?: boolean;
+}): MessagePart[] {
+  return args.parts.map((part) => {
+    if (part.type !== "user_input" || part.requestId !== args.requestId) {
+      return part;
+    }
+
+    return {
+      ...part,
+      answers: args.answers,
+      state: args.denied ? "input-denied" : "input-responded",
+    };
+  });
+}

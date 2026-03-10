@@ -7,12 +7,24 @@ import {
   loadWorkspaceSnapshot,
   upsertWorkspace,
   deleteWorkspacePersistence,
+  type TaskProviderConversationState,
   type WorkspaceSummary,
 } from "@/lib/db/workspaces.db";
 import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
 import type { NormalizedProviderEvent, ProviderId, ProviderTurnRequest } from "@/lib/providers/provider.types";
-import { handleCommand } from "@/lib/commands";
+import { resolveCommandInput } from "@/lib/commands";
+import { getCachedProviderCommandCatalog } from "@/lib/providers/provider-command-catalog";
 import { getArchiveFallbackTaskId, isTaskArchived } from "@/lib/tasks";
+import { CURRENT_WORKSPACE_SNAPSHOT_VERSION } from "@/lib/task-context/workspace-snapshot";
+import {
+  findLatestPendingApprovalPart,
+  findLatestPendingUserInputPart,
+  hasRenderableAssistantContent,
+  mergePromptSuggestions,
+  mergeToolResultIntoPart,
+  updateApprovalPartsByRequestId,
+  updateUserInputPartsByRequestId,
+} from "@/store/provider-message.utils";
 import type {
   ApprovalPart,
   ChatMessage,
@@ -143,6 +155,8 @@ export interface AppSettings {
   smartSuggestions: boolean;
   chatSendPreview: boolean;
   chatStreamingEnabled: boolean;
+  messageFontSize: "base" | "lg" | "xl";
+  messageCodeFontSize: "base" | "lg" | "xl";
   modelClaude: string;
   modelCodex: string;
   rulesPresetPrimary: string;
@@ -169,6 +183,7 @@ export interface AppSettings {
   editorTabSize: number;
   diffViewMode: "unified" | "split";
   providerDebugStream: boolean;
+  turnDiagnosticsVisible: boolean;
   providerTimeoutMs: number;
   claudePermissionMode: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
   claudeAllowDangerouslySkipPermissions: boolean;
@@ -208,6 +223,8 @@ interface AppState {
   taskCheckpointById: Record<string, string>;
   providerAvailability: Record<ProviderId, boolean>;
   activeTurnIdsByTask: Record<string, string | undefined>;
+  nativeConversationReadyByTask: Record<string, boolean>;
+  providerConversationByTask: Record<string, TaskProviderConversationState>;
   hydrateWorkspaces: () => Promise<void>;
   flushActiveWorkspaceSnapshot: (args?: { sync?: boolean }) => Promise<void>;
   createProject: (args: { name?: string }) => Promise<void>;
@@ -279,6 +296,8 @@ const defaultSettings: AppSettings = {
   smartSuggestions: true,
   chatSendPreview: true,
   chatStreamingEnabled: true,
+  messageFontSize: "lg",
+  messageCodeFontSize: "base",
   modelClaude: "claude-sonnet-4-6",
   modelCodex: "gpt-5.4",
   rulesPresetPrimary: "typescript-best-practices",
@@ -290,7 +309,7 @@ const defaultSettings: AppSettings = {
   skillsAutoSuggest: true,
   commandPolicy: "confirm",
   commandAllowlist: "bun,git,rg",
-  customCommands: "/clear = @clear\n/meow = Meow from {provider} ({model})",
+  customCommands: "/stave:clear = @clear\n/stave:meow = Meow from {provider} ({model})",
   reviewStrictMode: true,
   reviewChecklistPreset: "safety-first",
   terminalFontSize: 12,
@@ -305,6 +324,7 @@ const defaultSettings: AppSettings = {
   editorTabSize: 2,
   diffViewMode: "unified",
   providerDebugStream: false,
+  turnDiagnosticsVisible: true,
   providerTimeoutMs: 300000,
   claudePermissionMode: "bypassPermissions",
   claudeAllowDangerouslySkipPermissions: true,
@@ -331,7 +351,22 @@ function createEmptyWorkspaceState() {
     tasks: [] as Task[],
     messagesByTask: {} as Record<string, ChatMessage[]>,
     promptDraftByTask: {} as Record<string, { text: string; attachedFilePath: string }>,
+    providerConversationByTask: {} as Record<string, TaskProviderConversationState>,
   };
+}
+
+function buildNativeConversationReadyByTask(args: {
+  tasks: Task[];
+  providerConversationByTask: Record<string, TaskProviderConversationState>;
+}) {
+  const next: Record<string, boolean> = {};
+
+  for (const task of args.tasks) {
+    const providerConversation = args.providerConversationByTask[task.id];
+    next[task.id] = Boolean(providerConversation?.[task.provider]?.trim());
+  }
+
+  return next;
 }
 
 function buildMessageId(args: { taskId: string; count: number }) {
@@ -530,6 +565,8 @@ function normalizeEventToPart(args: { event: NormalizedProviderEvent }): Message
       return createThinkingPart({ text: event.text, isStreaming: event.isStreaming ?? false });
     case "text":
       return createUserTextPart({ text: event.text });
+    case "provider_conversation":
+      return null;
     case "tool":
       return createToolPart({
         toolUseId: event.toolUseId,
@@ -589,6 +626,7 @@ function updateMessageById(args: {
 function applyApprovalState(args: {
   taskId: string;
   messageId: string;
+  requestId: string;
   approved: boolean;
 }) {
   useAppStore.setState((state) => {
@@ -601,14 +639,10 @@ function applyApprovalState(args: {
           messageId: args.messageId,
           update: (message) => ({
             ...message,
-            parts: message.parts.map((part) => {
-              if (part.type !== "approval") {
-                return part;
-              }
-              return {
-                ...part,
-                state: args.approved ? "approval-responded" : "output-denied",
-              };
+            parts: updateApprovalPartsByRequestId({
+              parts: message.parts,
+              requestId: args.requestId,
+              approved: args.approved,
             }),
           }),
         }),
@@ -620,6 +654,7 @@ function applyApprovalState(args: {
 function applyUserInputState(args: {
   taskId: string;
   messageId: string;
+  requestId: string;
   answers?: Record<string, string>;
   denied?: boolean;
 }) {
@@ -633,15 +668,11 @@ function applyUserInputState(args: {
           messageId: args.messageId,
           update: (message) => ({
             ...message,
-            parts: message.parts.map((part) => {
-              if (part.type !== "user_input") {
-                return part;
-              }
-              return {
-                ...part,
-                answers: args.answers,
-                state: args.denied ? "input-denied" : "input-responded",
-              };
+            parts: updateUserInputPartsByRequestId({
+              parts: message.parts,
+              requestId: args.requestId,
+              answers: args.answers,
+              denied: args.denied,
             }),
           }),
         }),
@@ -671,19 +702,19 @@ function appendProviderEventToAssistant(args: {
   if (args.event.type === "prompt_suggestions") {
     return {
       ...args.message,
-      promptSuggestions: args.event.suggestions,
+      promptSuggestions: mergePromptSuggestions({
+        existing: args.message.promptSuggestions,
+        incoming: args.event.suggestions,
+      }),
     };
   }
 
   if (args.event.type === "tool_result") {
-    const { tool_use_id, output, isError } = args.event;
-    const updatedParts = args.message.parts.map((p) => {
-      if (p.type === "tool_use" && p.toolUseId === tool_use_id) {
-        const nextState: "output-error" | "output-available" = isError ? "output-error" : "output-available";
-        return { ...p, output, state: nextState };
-      }
-      return p;
-    });
+    const toolResultEvent = args.event;
+    const updatedParts = args.message.parts.map((part) => mergeToolResultIntoPart({
+      part,
+      event: toolResultEvent,
+    }));
     return { ...args.message, parts: updatedParts };
   }
 
@@ -696,17 +727,12 @@ function appendProviderEventToAssistant(args: {
     };
   }
 
-  if (args.event.type === "done") {
-    const hasRenderableContent =
-      args.message.content.trim().length > 0
-      || args.message.parts.some(p =>
-          (p.type === "text" && p.text?.trim().length > 0) ||
-          (p.type === "system_event" && p.content?.trim().length > 0) ||
-          (p.type === "thinking" && p.text?.trim().length > 0)
-        )
-      || args.message.isPlanResponse === true;
+  if (args.event.type === "provider_conversation") {
+    return args.message;
+  }
 
-    if (!hasRenderableContent) {
+  if (args.event.type === "done") {
+    if (!hasRenderableAssistantContent({ message: args.message })) {
       return {
         ...args.message,
         content: "No response returned.",
@@ -793,13 +819,6 @@ function appendProviderEventToAssistant(args: {
   };
 }
 
-function hasRenderableAssistantContent(args: { message: ChatMessage }) {
-  return (
-    args.message.content.trim().length > 0
-    || args.message.parts.length > 0
-  );
-}
-
 function createPlanAssistantMessage(args: {
   taskId: string;
   count: number;
@@ -858,6 +877,7 @@ function toHistoryLine(args: { message: ChatMessage }) {
 function buildTaskContextPrompt(args: {
   history: ChatMessage[];
   userInput: string;
+  includeHistory?: boolean;
   fileContext?: {
     filePath: string;
     content: string;
@@ -866,14 +886,16 @@ function buildTaskContextPrompt(args: {
   };
 }) {
   const maxHistoryChars = 12000;
-  const serializedHistory = args.history
-    .map((message) => toHistoryLine({ message }))
-    .join("\n")
-    .slice(-maxHistoryChars);
-
   const sections = [
-    "[Task Shared Context]",
-    serializedHistory.length > 0 ? serializedHistory : "(no prior messages)",
+    ...(args.includeHistory !== false
+      ? [
+          "[Task Shared Context]",
+          args.history
+            .map((message) => toHistoryLine({ message }))
+            .join("\n")
+            .slice(-maxHistoryChars) || "(no prior messages)",
+        ]
+      : []),
   ];
 
   if (args.fileContext) {
@@ -997,12 +1019,15 @@ function createWorkspaceSnapshot(args: {
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
   promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+  providerConversationByTask: Record<string, TaskProviderConversationState>;
 }) {
   return {
+    version: CURRENT_WORKSPACE_SNAPSHOT_VERSION,
     activeTaskId: args.activeTaskId,
     tasks: args.tasks,
     messagesByTask: normalizeMessagesForSnapshot({ messagesByTask: args.messagesByTask }),
     promptDraftByTask: args.promptDraftByTask,
+    providerConversationByTask: args.providerConversationByTask,
   };
 }
 
@@ -1013,6 +1038,7 @@ async function persistWorkspaceSnapshot(args: {
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
   promptDraftByTask: Record<string, { text: string; attachedFilePath: string }>;
+  providerConversationByTask: Record<string, TaskProviderConversationState>;
 }) {
   await upsertWorkspace({
     id: args.workspaceId,
@@ -1022,6 +1048,7 @@ async function persistWorkspaceSnapshot(args: {
       tasks: args.tasks,
       messagesByTask: args.messagesByTask,
       promptDraftByTask: args.promptDraftByTask,
+      providerConversationByTask: args.providerConversationByTask,
     }),
   });
 }
@@ -1064,6 +1091,8 @@ export const useAppStore = create<AppState>()(
         codex: true,
       },
       activeTurnIdsByTask: {},
+      nativeConversationReadyByTask: {},
+      providerConversationByTask: {},
       hydrateWorkspaces: async () => {
         const initialRows = await listWorkspaceSummaries();
         const stateBeforeHydrate = get();
@@ -1077,6 +1106,7 @@ export const useAppStore = create<AppState>()(
               tasks: stateBeforeHydrate.tasks,
               messagesByTask: stateBeforeHydrate.messagesByTask,
               promptDraftByTask: stateBeforeHydrate.promptDraftByTask,
+              providerConversationByTask: stateBeforeHydrate.providerConversationByTask,
             }),
           });
         }
@@ -1089,6 +1119,7 @@ export const useAppStore = create<AppState>()(
               tasks: [],
               messagesByTask: {},
               promptDraftByTask: {},
+              providerConversationByTask: {},
             }),
           });
         }
@@ -1151,6 +1182,7 @@ export const useAppStore = create<AppState>()(
           const projectPath = state.projectPath;
           const branchById: Record<string, string> = { ...state.workspaceBranchById };
           const pathById: Record<string, string> = { ...state.workspacePathById };
+          const providerConversationByTask = snapshot?.providerConversationByTask ?? empty.providerConversationByTask;
 
           for (const row of rows) {
             const isDefault = row.id === defaultWorkspaceId;
@@ -1177,6 +1209,11 @@ export const useAppStore = create<AppState>()(
             }),
             promptDraftByTask: snapshot?.promptDraftByTask ?? empty.promptDraftByTask,
             activeTurnIdsByTask: {},
+            providerConversationByTask,
+            nativeConversationReadyByTask: buildNativeConversationReadyByTask({
+              tasks: snapshot?.tasks ?? empty.tasks,
+              providerConversationByTask,
+            }),
           };
         });
       },
@@ -1193,6 +1230,7 @@ export const useAppStore = create<AppState>()(
           tasks: state.tasks,
           messagesByTask: state.messagesByTask,
           promptDraftByTask: state.promptDraftByTask,
+          providerConversationByTask: state.providerConversationByTask,
         });
 
         if (sync) {
@@ -1214,6 +1252,7 @@ export const useAppStore = create<AppState>()(
           tasks: state.tasks,
           messagesByTask: state.messagesByTask,
           promptDraftByTask: state.promptDraftByTask,
+          providerConversationByTask: state.providerConversationByTask,
         });
       },
       createProject: async ({ name }) => {
@@ -1255,6 +1294,7 @@ export const useAppStore = create<AppState>()(
             tasks: empty.tasks,
             messagesByTask: empty.messagesByTask,
             promptDraftByTask: empty.promptDraftByTask,
+            providerConversationByTask: empty.providerConversationByTask,
           }),
         });
 
@@ -1270,6 +1310,9 @@ export const useAppStore = create<AppState>()(
           tasks: empty.tasks,
           messagesByTask: empty.messagesByTask,
           promptDraftByTask: empty.promptDraftByTask,
+          activeTurnIdsByTask: {},
+          nativeConversationReadyByTask: {},
+          providerConversationByTask: empty.providerConversationByTask,
           workspaceRootName: projectName,
           projectFiles: root.files,
         }));
@@ -1294,6 +1337,7 @@ export const useAppStore = create<AppState>()(
             tasks: current.tasks,
             messagesByTask: current.messagesByTask,
             promptDraftByTask: current.promptDraftByTask,
+            providerConversationByTask: current.providerConversationByTask,
           });
         }
 
@@ -1333,6 +1377,7 @@ export const useAppStore = create<AppState>()(
           tasks: empty.tasks,
           messagesByTask: empty.messagesByTask,
           promptDraftByTask: empty.promptDraftByTask,
+          providerConversationByTask: empty.providerConversationByTask,
         });
         await upsertWorkspace({
           id: workspaceId,
@@ -1373,6 +1418,11 @@ export const useAppStore = create<AppState>()(
           tasks: snapshot.tasks,
           messagesByTask: snapshot.messagesByTask,
           promptDraftByTask: snapshot.promptDraftByTask ?? {},
+          providerConversationByTask: snapshot.providerConversationByTask ?? {},
+          nativeConversationReadyByTask: buildNativeConversationReadyByTask({
+            tasks: snapshot.tasks,
+            providerConversationByTask: snapshot.providerConversationByTask ?? {},
+          }),
           projectFiles: files,
         }));
         return { ok: true };
@@ -1415,6 +1465,9 @@ export const useAppStore = create<AppState>()(
               activeTaskId: empty.activeTaskId,
               tasks: empty.tasks,
               messagesByTask: empty.messagesByTask,
+              promptDraftByTask: empty.promptDraftByTask,
+              providerConversationByTask: empty.providerConversationByTask,
+              nativeConversationReadyByTask: {},
             };
           });
           return;
@@ -1447,6 +1500,7 @@ export const useAppStore = create<AppState>()(
             tasks: current.tasks,
             messagesByTask: current.messagesByTask,
             promptDraftByTask: current.promptDraftByTask,
+            providerConversationByTask: current.providerConversationByTask,
           });
         }
 
@@ -1462,17 +1516,28 @@ export const useAppStore = create<AppState>()(
         const nextWorkspaces = current.workspaces;
         const empty = createEmptyWorkspaceState();
 
-        set((state) => ({
-          workspaces: nextWorkspaces.length > 0 ? nextWorkspaces : state.workspaces,
-          activeWorkspaceId: workspaceId,
-          activeTaskId: nextSnapshot?.activeTaskId ?? empty.activeTaskId,
-          tasks: nextSnapshot?.tasks ?? empty.tasks,
-          messagesByTask: normalizeMessagesForSnapshot({
-            messagesByTask: nextSnapshot?.messagesByTask ?? empty.messagesByTask,
-          }),
-          activeTurnIdsByTask: {},
-          projectFiles: files,
-        }));
+        set((state) => {
+          const providerConversationByTask = nextSnapshot?.providerConversationByTask ?? empty.providerConversationByTask;
+          const tasks = nextSnapshot?.tasks ?? empty.tasks;
+
+          return {
+            workspaces: nextWorkspaces.length > 0 ? nextWorkspaces : state.workspaces,
+            activeWorkspaceId: workspaceId,
+            activeTaskId: nextSnapshot?.activeTaskId ?? empty.activeTaskId,
+            tasks,
+            messagesByTask: normalizeMessagesForSnapshot({
+              messagesByTask: nextSnapshot?.messagesByTask ?? empty.messagesByTask,
+            }),
+            promptDraftByTask: nextSnapshot?.promptDraftByTask ?? empty.promptDraftByTask,
+            activeTurnIdsByTask: {},
+            providerConversationByTask,
+            nativeConversationReadyByTask: buildNativeConversationReadyByTask({
+              tasks,
+              providerConversationByTask,
+            }),
+            projectFiles: files,
+          };
+        });
       },
       setDarkMode: ({ enabled }) => {
         set((state) => ({
@@ -1540,6 +1605,13 @@ export const useAppStore = create<AppState>()(
               ...state.messagesByTask,
               [nextTask.id]: [],
             },
+            nativeConversationReadyByTask: {
+              ...state.nativeConversationReadyByTask,
+              [nextTask.id]: false,
+            },
+            providerConversationByTask: {
+              ...state.providerConversationByTask,
+            },
           };
         });
       },
@@ -1591,6 +1663,13 @@ export const useAppStore = create<AppState>()(
             messagesByTask: {
               ...state.messagesByTask,
               [duplicatedTask.id]: duplicatedMessages,
+            },
+            nativeConversationReadyByTask: {
+              ...state.nativeConversationReadyByTask,
+              [duplicatedTask.id]: false,
+            },
+            providerConversationByTask: {
+              ...state.providerConversationByTask,
             },
           };
         });
@@ -1724,7 +1803,7 @@ export const useAppStore = create<AppState>()(
         });
         void window.api?.provider?.cleanupTask?.({ taskId });
       },
-      setTaskProvider: ({ taskId, provider }) =>
+      setTaskProvider: ({ taskId, provider }) => {
         set((state) => {
           const hasTask = state.tasks.some((task) => task.id === taskId);
           if (!hasTask) {
@@ -1740,8 +1819,14 @@ export const useAppStore = create<AppState>()(
                 : task
             ),
             draftProvider: provider,
+            nativeConversationReadyByTask: {
+              ...state.nativeConversationReadyByTask,
+              [taskId]: Boolean(state.providerConversationByTask[taskId]?.[provider]?.trim()),
+            },
           };
-        }),
+        });
+        void window.api?.provider?.cleanupTask?.({ taskId });
+      },
       setWorkspaceBranch: ({ workspaceId, branch }) =>
         set((state) => ({
           workspaceBranchById: {
@@ -1846,20 +1931,34 @@ export const useAppStore = create<AppState>()(
 
         // ── Slash-command interception ────────────────────────────────────
         // Check BEFORE building the prompt or touching the provider.
-        // Applies to both Claude and Codex — zero API calls for commands.
+        // Stave-local commands are handled here. Claude native commands are
+        // validated against the most recently loaded SDK catalog for the
+        // current workspace so unsupported slash commands do not get sent as
+        // ordinary prompts.
         const activeModel = provider === "claude-code"
           ? state.settings.modelClaude
           : state.settings.modelCodex;
+        const providerCommandCatalog = getCachedProviderCommandCatalog({
+          providerId: provider,
+          cwd: workspaceCwd,
+        });
 
-        const commandResult = handleCommand(content, {
+        const commandResult = resolveCommandInput(content, {
           provider,
           model: activeModel,
           messages: existingHistory,
           settings: state.settings,
+          taskId: resolvedTaskId,
+          taskTitle: task?.title,
+          workspaceCwd,
+          checkpoint: state.taskCheckpointById[resolvedTaskId],
+          isTurnActive: Boolean(state.activeTurnIdsByTask[resolvedTaskId]),
+          providerCommandCatalog,
         });
 
-        if (commandResult.handled) {
+        if (commandResult.kind === "local-response") {
           const responseText = commandResult.response ?? "";
+          const shouldClearProviderConversation = commandResult.action === "clear";
           set((nextState) => {
             const current = nextState.messagesByTask[resolvedTaskId] ?? [];
             const userMessageId = buildMessageId({ taskId: resolvedTaskId, count: current.length });
@@ -1903,8 +2002,20 @@ export const useAppStore = create<AppState>()(
                 ...nextState.activeTurnIdsByTask,
                 [resolvedTaskId]: undefined,
               },
+              nativeConversationReadyByTask: {
+                ...nextState.nativeConversationReadyByTask,
+                ...(shouldClearProviderConversation ? { [resolvedTaskId]: false } : {}),
+              },
+              providerConversationByTask: shouldClearProviderConversation
+                ? Object.fromEntries(
+                    Object.entries(nextState.providerConversationByTask).filter(([key]) => key !== resolvedTaskId)
+                  )
+                : nextState.providerConversationByTask,
             };
           });
+          if (shouldClearProviderConversation) {
+            void window.api?.provider?.cleanupTask?.({ taskId: resolvedTaskId });
+          }
           return; // skip runProviderTurn entirely
         }
         // ── End slash-command interception ────────────────────────────────
@@ -1912,8 +2023,10 @@ export const useAppStore = create<AppState>()(
         const prompt = buildTaskContextPrompt({
           history: existingHistory,
           userInput: content,
+          includeHistory: !state.nativeConversationReadyByTask[resolvedTaskId],
           fileContext,
         });
+        const providerConversation = state.providerConversationByTask[resolvedTaskId];
 
         set((nextState) => {
           const current = nextState.messagesByTask[resolvedTaskId] ?? [];
@@ -2019,9 +2132,33 @@ export const useAppStore = create<AppState>()(
 
             let current = nextState.messagesByTask[resolvedTaskId] ?? [];
             let nextActiveTurnIds = nextState.activeTurnIdsByTask;
+            let nextNativeConversationReadyByTask = nextState.nativeConversationReadyByTask;
+            let nextProviderConversationByTask = nextState.providerConversationByTask;
             let changed = false;
 
             for (const event of pendingEvents) {
+              if (event.type === "provider_conversation") {
+                const currentConversation = nextProviderConversationByTask[resolvedTaskId];
+                if (currentConversation?.[event.providerId] !== event.nativeConversationId) {
+                  nextProviderConversationByTask = {
+                    ...nextProviderConversationByTask,
+                    [resolvedTaskId]: {
+                      ...currentConversation,
+                      [event.providerId]: event.nativeConversationId,
+                    },
+                  };
+                  changed = true;
+                }
+                if (!nextNativeConversationReadyByTask[resolvedTaskId]) {
+                  nextNativeConversationReadyByTask = {
+                    ...nextNativeConversationReadyByTask,
+                    [resolvedTaskId]: true,
+                  };
+                  changed = true;
+                }
+                continue;
+              }
+
               const target = current[current.length - 1];
               if (!target || target.role !== "assistant") {
                 break;
@@ -2055,6 +2192,18 @@ export const useAppStore = create<AppState>()(
               current = [...current.slice(0, -1), updated];
               changed = true;
 
+              if (
+                event.type !== "system"
+                && event.type !== "error"
+                && event.type !== "done"
+                && !nextNativeConversationReadyByTask[resolvedTaskId]
+              ) {
+                nextNativeConversationReadyByTask = {
+                  ...nextNativeConversationReadyByTask,
+                  [resolvedTaskId]: true,
+                };
+              }
+
               if (event.type === "done") {
                 nextActiveTurnIds = {
                   ...nextActiveTurnIds,
@@ -2073,6 +2222,8 @@ export const useAppStore = create<AppState>()(
                 [resolvedTaskId]: current,
               },
               activeTurnIdsByTask: nextActiveTurnIds,
+              nativeConversationReadyByTask: nextNativeConversationReadyByTask,
+              providerConversationByTask: nextProviderConversationByTask,
             };
           });
         };
@@ -2094,6 +2245,10 @@ export const useAppStore = create<AppState>()(
             claudeAllowUnsandboxedCommands: get().settings.claudeAllowUnsandboxedCommands,
             claudeEffort: get().settings.claudeEffort,
             claudeThinkingMode: get().settings.claudeThinkingMode,
+            ...(provider === "claude-code"
+              && providerConversation?.["claude-code"]?.trim()
+              ? { claudeResumeSessionId: providerConversation["claude-code"] }
+              : {}),
             codexSandboxMode: get().settings.codexSandboxMode,
             codexNetworkAccessEnabled: get().settings.codexNetworkAccessEnabled,
             codexApprovalPolicy: get().settings.codexApprovalPolicy,
@@ -2101,6 +2256,10 @@ export const useAppStore = create<AppState>()(
             codexModelReasoningEffort: get().settings.codexModelReasoningEffort,
             codexWebSearchMode: get().settings.codexWebSearchMode,
             codexPlanMode: get().settings.codexPlanMode,
+            ...(provider === "codex"
+              && providerConversation?.codex?.trim()
+              ? { codexResumeThreadId: providerConversation.codex }
+              : {}),
           },
           onEvent: ({ event }) => {
             queuedEvents.push(event);
@@ -2162,8 +2321,8 @@ export const useAppStore = create<AppState>()(
         const task = stateBefore.tasks.find((item) => item.id === taskId);
         const providerId = task?.provider;
         const message = (stateBefore.messagesByTask[taskId] ?? []).find((item) => item.id === messageId);
-        const approvalPart = message?.parts.find((part) => part.type === "approval");
-        if (providerId && approvalPart && approvalPart.type === "approval") {
+        const approvalPart = findLatestPendingApprovalPart({ message });
+        if (providerId && approvalPart) {
           const respondApproval = window.api?.provider?.respondApproval;
           if (respondApproval) {
             void respondApproval({
@@ -2194,7 +2353,12 @@ export const useAppStore = create<AppState>()(
                 });
                 return;
               }
-              applyApprovalState({ taskId, messageId, approved });
+              applyApprovalState({
+                taskId,
+                messageId,
+                requestId: approvalPart.requestId,
+                approved,
+              });
             }).catch((error) => {
               set((state) => {
                 const current = state.messagesByTask[taskId] ?? [];
@@ -2221,15 +2385,23 @@ export const useAppStore = create<AppState>()(
             return;
           }
         }
-        applyApprovalState({ taskId, messageId, approved });
+        if (approvalPart) {
+          applyApprovalState({
+            taskId,
+            messageId,
+            requestId: approvalPart.requestId,
+            approved,
+          });
+          return;
+        }
       },
       resolveUserInput: ({ taskId, messageId, answers, denied }) => {
         const stateBefore = get();
         const task = stateBefore.tasks.find((item) => item.id === taskId);
         const providerId = task?.provider;
         const message = (stateBefore.messagesByTask[taskId] ?? []).find((item) => item.id === messageId);
-        const userInputPart = message?.parts.find((part) => part.type === "user_input");
-        if (providerId && userInputPart && userInputPart.type === "user_input") {
+        const userInputPart = findLatestPendingUserInputPart({ message });
+        if (providerId && userInputPart) {
           const respondUserInput = window.api?.provider?.respondUserInput;
           if (respondUserInput) {
             void respondUserInput({
@@ -2262,7 +2434,13 @@ export const useAppStore = create<AppState>()(
                 });
                 return;
               }
-              applyUserInputState({ taskId, messageId, answers, denied });
+              applyUserInputState({
+                taskId,
+                messageId,
+                requestId: userInputPart.requestId,
+                answers,
+                denied,
+              });
             }).catch((error) => {
               set((state) => {
                 const current = state.messagesByTask[taskId] ?? [];
@@ -2289,7 +2467,15 @@ export const useAppStore = create<AppState>()(
             return;
           }
         }
-        applyUserInputState({ taskId, messageId, answers, denied });
+        if (userInputPart) {
+          applyUserInputState({
+            taskId,
+            messageId,
+            requestId: userInputPart.requestId,
+            answers,
+            denied,
+          });
+        }
       },
       resolveDiff: ({ taskId, messageId, accepted, partIndex }) => {
         set((state) => {
@@ -2663,12 +2849,14 @@ export const useAppStore = create<AppState>()(
         draftProvider: state.draftProvider,
         tasks: state.tasks,
         messagesByTask: state.messagesByTask,
+        promptDraftByTask: state.promptDraftByTask,
         layout: state.layout,
         settings: state.settings,
         editorTabs: state.editorTabs,
         activeEditorTabId: state.activeEditorTabId,
         workspaceRootName: state.workspaceRootName,
         projectFiles: state.projectFiles,
+        providerConversationByTask: state.providerConversationByTask,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) {

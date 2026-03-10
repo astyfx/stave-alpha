@@ -42,6 +42,10 @@ describe("task utils", () => {
 
   test("selects an unarchived fallback after archive", () => {
     expect(getArchiveFallbackTaskId({ tasks, archivedTaskId: "task-active-1" })).toBe("task-active-2");
+    expect(getArchiveFallbackTaskId({
+      tasks: tasks.filter((task) => task.id !== "task-active-2"),
+      archivedTaskId: "task-active-1",
+    })).toBe("");
     expect(getArchiveFallbackTaskId({ tasks: [tasks[1]!], archivedTaskId: "task-archived-1" })).toBe("");
   });
 

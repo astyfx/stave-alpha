@@ -1,4 +1,4 @@
-import { cleanupClaudeTask, streamClaudeWithSdk } from "./claude-sdk-runtime";
+import { cleanupClaudeTask, getClaudeCommandCatalog, streamClaudeWithSdk } from "./claude-sdk-runtime";
 import { cleanupCodexTask, streamCodexWithSdk } from "./codex-sdk-runtime";
 import type { BridgeEvent, ProviderRuntime, StreamTurnArgs } from "./types";
 import { spawn } from "node:child_process";
@@ -290,4 +290,25 @@ export const providerRuntime: ProviderRuntime = {
       });
     });
   }),
+  getCommandCatalog: async ({ providerId, cwd, runtimeOptions }) => {
+    if (providerId === "claude-code") {
+      const result = await withTimeout({
+        task: getClaudeCommandCatalog({ cwd, runtimeOptions }),
+        timeoutMs: 15_000,
+      });
+      return result ?? {
+        ok: false,
+        supported: false,
+        commands: [],
+        detail: "Timed out loading the Claude command catalog.",
+      };
+    }
+
+    return {
+      ok: true,
+      supported: false,
+      commands: [],
+      detail: "Codex does not expose a native slash-command catalog through the current SDK transport.",
+    };
+  },
 };

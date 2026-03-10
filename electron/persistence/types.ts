@@ -26,6 +26,7 @@ export interface PersistenceChatMessageRow {
 }
 
 export interface PersistenceWorkspaceSnapshot {
+  version: number;
   activeTaskId: string;
   tasks: PersistenceTaskRow[];
   messagesByTask: Record<string, PersistenceChatMessageRow[]>;
@@ -45,6 +46,16 @@ export interface PersistenceTurnEvent {
   eventType: string;
   payload: unknown;
   createdAt: string;
+}
+
+export interface PersistenceTurnSummary {
+  id: string;
+  workspaceId: string;
+  taskId: string;
+  providerId: "claude-code" | "codex";
+  createdAt: string;
+  completedAt: string | null;
+  eventCount: number;
 }
 
 export interface PersistenceRpcRequest {

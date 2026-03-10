@@ -20,20 +20,7 @@ async function* fromPolledStream(args: {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
-    chatStreamingEnabled?: boolean;
-    debug?: boolean;
-    providerTimeoutMs?: number;
-    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
-    claudeAllowDangerouslySkipPermissions?: boolean;
-    claudeSandboxEnabled?: boolean;
-    claudeAllowUnsandboxedCommands?: boolean;
-    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-    codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-    codexPathOverride?: string;
-    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-  };
+  runtimeOptions?: ProviderTurnRequest["runtimeOptions"];
 }) {
   const startStreamTurn = window.api?.provider?.startStreamTurn;
   const readStreamTurn = window.api?.provider?.readStreamTurn;
@@ -76,20 +63,7 @@ async function* fromPushStream(args: {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
-    chatStreamingEnabled?: boolean;
-    debug?: boolean;
-    providerTimeoutMs?: number;
-    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
-    claudeAllowDangerouslySkipPermissions?: boolean;
-    claudeSandboxEnabled?: boolean;
-    claudeAllowUnsandboxedCommands?: boolean;
-    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-    codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-    codexPathOverride?: string;
-    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-  };
+  runtimeOptions?: ProviderTurnRequest["runtimeOptions"];
 }) {
   const startPushTurn = window.api?.provider?.startPushTurn;
   const subscribeStreamEvents = window.api?.provider?.subscribeStreamEvents;
@@ -175,20 +149,7 @@ async function resolveBridgeStream(args: {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
-    chatStreamingEnabled?: boolean;
-    debug?: boolean;
-    providerTimeoutMs?: number;
-    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
-    claudeAllowDangerouslySkipPermissions?: boolean;
-    claudeSandboxEnabled?: boolean;
-    claudeAllowUnsandboxedCommands?: boolean;
-    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-    codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-    codexPathOverride?: string;
-    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-  };
+  runtimeOptions?: ProviderTurnRequest["runtimeOptions"];
 }): Promise<unknown[] | AsyncIterable<unknown> | null> {
   if (args.runtimeOptions?.chatStreamingEnabled === false) {
     const streamTurn = window.api?.provider?.streamTurn;

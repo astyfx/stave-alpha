@@ -5,6 +5,7 @@ import type {
   SDKAssistantMessage,
   SDKSystemMessage,
   SDKResultMessage,
+  SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import { toText } from "./utils";
 import { createTurnDiffTracker } from "./turn-diff-tracker";
@@ -12,8 +13,24 @@ import { accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { z } from "zod";
 
 type ClaudePermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
+
+const ClaudePermissionResultSchema = z.union([
+  z.object({
+    behavior: z.literal("allow"),
+    updatedInput: z.record(z.string(), z.unknown()),
+    updatedPermissions: z.array(z.unknown()).optional(),
+  }),
+  z.object({
+    behavior: z.literal("deny"),
+    message: z.string(),
+    interrupt: z.boolean().optional(),
+  }),
+]);
+
+type ClaudePermissionResult = z.infer<typeof ClaudePermissionResultSchema>;
 
 function parseBooleanEnv(args: { value: string | undefined; fallback: boolean }) {
   const normalized = args.value?.trim().toLowerCase();
@@ -200,6 +217,68 @@ function buildClaudeDiagnostics(args: {
   };
 }
 
+function normalizeClaudeToolInput(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return {};
+  }
+  return input as Record<string, unknown>;
+}
+
+function validateClaudePermissionResult(args: {
+  candidate: ClaudePermissionResult;
+  fallbackMessage: string;
+  context: string;
+}): ClaudePermissionResult {
+  const parsed = ClaudePermissionResultSchema.safeParse(args.candidate);
+  if (parsed.success) {
+    return parsed.data;
+  }
+  console.warn("[claude-sdk-runtime] invalid permission callback result; falling back to deny", {
+    context: args.context,
+    error: parsed.error.flatten(),
+  });
+  return {
+    behavior: "deny",
+    message: args.fallbackMessage,
+  };
+}
+
+function buildClaudeDenyPermissionResult(args: {
+  message: string;
+  context: string;
+  interrupt?: boolean;
+}): ClaudePermissionResult {
+  return validateClaudePermissionResult({
+    candidate: {
+      behavior: "deny",
+      message: args.message,
+      ...(typeof args.interrupt === "boolean" ? { interrupt: args.interrupt } : {}),
+    },
+    fallbackMessage: args.message,
+    context: args.context,
+  });
+}
+
+export function buildClaudeSystemPrompt(args: {
+  cwd: string;
+  baseSystemPrompt?: string;
+}) {
+  const workspacePrompt = [
+    "Stave workspace context:",
+    `Current workspace root: ${args.cwd}`,
+    "Resolve every relative filesystem path against the workspace root above.",
+    "Do not rewrite a user-provided relative path like ./docs into a sibling directory outside that workspace root.",
+    "If the user explicitly asks to access a path outside the workspace root, keep the exact requested path and request approval instead of guessing a nearby absolute path.",
+  ].join("\n");
+
+  const baseSystemPrompt = args.baseSystemPrompt?.trim();
+  if (!baseSystemPrompt) {
+    return workspacePrompt;
+  }
+
+  return `${baseSystemPrompt}\n\n${workspacePrompt}`;
+}
+
 function extractClaudeTerminalIssue(args: { stdoutTail: string }) {
   const source = args.stdoutTail;
   if (source.includes("\"error\":\"rate_limit\"") || source.includes("\"rate_limit_event\"")) {
@@ -300,6 +379,56 @@ function waitForClaudeToolDecision<T>(args: {
   });
 }
 
+export function buildClaudeApprovalPermissionResult(args: {
+  approved: boolean;
+  normalizedInput: Record<string, unknown>;
+  denialMessage: string;
+}): ClaudePermissionResult {
+  if (!args.approved) {
+    return buildClaudeDenyPermissionResult({
+      message: args.denialMessage,
+      context: "approval:deny",
+    });
+  }
+
+  // The installed SDK runtime validates successful permission results more
+  // strictly than its published TypeScript surface. Returning the current
+  // input avoids a malformed allow response when no input changes are needed.
+  return validateClaudePermissionResult({
+    candidate: {
+      behavior: "allow",
+      updatedInput: args.normalizedInput,
+    },
+    fallbackMessage: args.denialMessage,
+    context: "approval:allow",
+  });
+}
+
+export function buildClaudeUserInputPermissionResult(args: {
+  normalizedInput: Record<string, unknown>;
+  answers?: Record<string, string>;
+  denied?: boolean;
+}): ClaudePermissionResult {
+  if (args.denied) {
+    return buildClaudeDenyPermissionResult({
+      message: "User declined to answer questions.",
+      context: "user-input:deny",
+    });
+  }
+
+  return validateClaudePermissionResult({
+    candidate: {
+      behavior: "allow",
+      updatedInput: {
+        ...args.normalizedInput,
+        answers: args.answers ?? {},
+      },
+    },
+    fallbackMessage: "User declined to answer questions.",
+    context: "user-input:allow",
+  });
+}
+
 function toClaudeThinkingConfig(thinkingMode?: "adaptive" | "enabled" | "disabled") {
   if (thinkingMode === "adaptive") {
     return { type: "adaptive" as const };
@@ -330,15 +459,34 @@ function buildClaudeUsageEvent(resultMsg: SDKResultMessage): BridgeEvent {
   };
 }
 
-function mapClaudeMessageToEvents(args: {
+function toProviderSlashCommand(command: SlashCommand) {
+  return {
+    name: command.name,
+    command: `/${command.name}`,
+    description: command.description,
+    ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+  };
+}
+
+export function mapClaudeMessageToEvents(args: {
   message: SDKMessage;
   claudeDebugStream: boolean;
 }): BridgeEvent[] {
   const { message, claudeDebugStream } = args;
 
   if (message.type === "system") {
+    const sysMsg = message as SDKSystemMessage & { subtype?: string; content?: string };
+    if (sysMsg.subtype === "local_command_output" && typeof sysMsg.content === "string" && sysMsg.content.trim()) {
+      return [{ type: "text", text: sysMsg.content }];
+    }
+    if (sysMsg.subtype === "init" && typeof sysMsg.session_id === "string" && sysMsg.session_id.trim()) {
+      return [{
+        type: "provider_conversation",
+        providerId: "claude-code",
+        nativeConversationId: sysMsg.session_id,
+      }];
+    }
     if (claudeDebugStream) {
-      const sysMsg = message as SDKSystemMessage;
       console.debug("[claude-sdk-runtime] system init", sysMsg.subtype, sysMsg.session_id);
     }
     return [];
@@ -566,14 +714,99 @@ function mapClaudeMessageToEvents(args: {
 const sessionIdByTask = new Map<string, string>();
 const activeRunByTask = new Map<string, Promise<void>>();
 
+export async function getClaudeCommandCatalog(args: {
+  cwd?: string;
+  runtimeOptions?: StreamTurnArgs["runtimeOptions"];
+}) {
+  let stream: Query | null = null;
+  try {
+    const runtimeCwd = args.cwd && path.isAbsolute(args.cwd) ? args.cwd : process.cwd();
+    const mod = await import("@anthropic-ai/claude-agent-sdk");
+    const queryFn = (mod as { query?: typeof import("@anthropic-ai/claude-agent-sdk").query }).query;
+
+    if (!queryFn) {
+      return {
+        ok: false,
+        supported: false,
+        commands: [],
+        detail: "Claude runtime failure: query() is unavailable from SDK import.",
+      };
+    }
+
+    const claudeExecutablePath = resolveClaudeExecutablePath();
+    const permissionMode = resolveClaudePermissionMode({
+      runtimeValue: args.runtimeOptions?.claudePermissionMode,
+      envValue: process.env.STAVE_CLAUDE_PERMISSION_MODE?.trim(),
+      fallback: "bypassPermissions",
+    });
+    const allowDangerouslySkipPermissions = args.runtimeOptions?.claudeAllowDangerouslySkipPermissions
+      ?? parseBooleanEnv({
+        value: process.env.STAVE_CLAUDE_ALLOW_DANGEROUSLY_SKIP_PERMISSIONS,
+        fallback: permissionMode === "bypassPermissions",
+      });
+    const claudeSandboxEnabled = args.runtimeOptions?.claudeSandboxEnabled
+      ?? parseBooleanEnv({
+        value: process.env.STAVE_CLAUDE_SANDBOX_ENABLED,
+        fallback: false,
+      });
+    const claudeAllowUnsandboxedCommands = args.runtimeOptions?.claudeAllowUnsandboxedCommands
+      ?? parseBooleanEnv({
+        value: process.env.STAVE_CLAUDE_ALLOW_UNSANDBOXED_COMMANDS,
+        fallback: true,
+      });
+    const thinking = toClaudeThinkingConfig(args.runtimeOptions?.claudeThinkingMode);
+
+    stream = queryFn({
+      prompt: "",
+      options: {
+        permissionMode,
+        ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions } : {}),
+        promptSuggestions: false,
+        cwd: runtimeCwd,
+        ...(args.runtimeOptions?.model ? { model: args.runtimeOptions.model } : {}),
+        ...(args.runtimeOptions?.claudeSystemPrompt ? { systemPrompt: args.runtimeOptions.claudeSystemPrompt } : {}),
+        ...(args.runtimeOptions?.claudeEffort ? { effort: args.runtimeOptions.claudeEffort } : {}),
+        ...(thinking ? { thinking } : {}),
+        ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
+        ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
+        sandbox: {
+          enabled: claudeSandboxEnabled,
+          allowUnsandboxedCommands: claudeAllowUnsandboxedCommands,
+        },
+        env: buildClaudeEnv({ executablePath: claudeExecutablePath }),
+        ...(claudeExecutablePath.length > 0 ? { pathToClaudeCodeExecutable: claudeExecutablePath } : {}),
+      },
+    }) as Query;
+
+    const commands = await stream.supportedCommands();
+    return {
+      ok: true,
+      supported: true,
+      commands: commands.map(toProviderSlashCommand),
+      detail: commands.length > 0
+        ? `Loaded ${commands.length} Claude native command${commands.length === 1 ? "" : "s"} for ${runtimeCwd}.`
+        : `Claude reported no native slash commands for ${runtimeCwd}.`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      supported: false,
+      commands: [],
+      detail: `Claude command catalog unavailable: ${toText(error)}`,
+    };
+  } finally {
+    stream?.close();
+  }
+}
+
 export function cleanupClaudeTask(taskId: string) {
   sessionIdByTask.delete(taskId);
   activeRunByTask.delete(taskId);
 }
 
-function resolveSessionId(args: { taskId?: string }) {
+function resolveSessionId(args: { taskId?: string; fallbackSessionId?: string }) {
   const taskKey = args.taskId ?? "default";
-  return sessionIdByTask.get(taskKey);
+  return sessionIdByTask.get(taskKey) ?? args.fallbackSessionId?.trim();
 }
 
 function rememberSessionId(args: { taskId?: string; sessionId?: string }) {
@@ -653,7 +886,10 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
       return true;
     });
 
-    const existingSessionId = resolveSessionId({ taskId: args.taskId });
+    const existingSessionId = resolveSessionId({
+      taskId: args.taskId,
+      fallbackSessionId: args.runtimeOptions?.claudeResumeSessionId,
+    });
     const permissionMode = resolveClaudePermissionMode({
       runtimeValue: args.runtimeOptions?.claudePermissionMode,
       envValue: process.env.STAVE_CLAUDE_PERMISSION_MODE?.trim(),
@@ -675,6 +911,10 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         fallback: true,
       });
     const thinking = toClaudeThinkingConfig(args.runtimeOptions?.claudeThinkingMode);
+    const claudeSystemPrompt = buildClaudeSystemPrompt({
+      cwd: runtimeCwd,
+      baseSystemPrompt: args.runtimeOptions?.claudeSystemPrompt,
+    });
     const stream = queryFn({
       prompt: args.prompt,
       options: {
@@ -685,7 +925,7 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         promptSuggestions: true,
         cwd: runtimeCwd,
         ...(args.runtimeOptions?.model ? { model: args.runtimeOptions.model } : {}),
-        ...(args.runtimeOptions?.claudeSystemPrompt ? { systemPrompt: args.runtimeOptions.claudeSystemPrompt } : {}),
+        ...(claudeSystemPrompt ? { systemPrompt: claudeSystemPrompt } : {}),
         ...(typeof args.runtimeOptions?.claudeMaxTurns === "number" ? { maxTurns: args.runtimeOptions.claudeMaxTurns } : {}),
         ...(typeof args.runtimeOptions?.claudeMaxBudgetUsd === "number" ? { maxBudgetUsd: args.runtimeOptions.claudeMaxBudgetUsd } : {}),
         ...(args.runtimeOptions?.claudeEffort ? { effort: args.runtimeOptions.claudeEffort } : {}),
@@ -693,16 +933,16 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
         ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
         canUseTool: async (toolName, input, options) => {
-          const normalizedInput = input ?? {};
+          const normalizedInput = normalizeClaudeToolInput(input);
           const requestId = options.toolUseID;
 
           if (toolName === "AskUserQuestion") {
             const questions = parseClaudeQuestionList({ input: normalizedInput });
             if (questions.length === 0) {
-              return {
-                behavior: "deny",
+              return buildClaudeDenyPermissionResult({
                 message: "AskUserQuestion was requested without any valid questions.",
-              };
+                context: "user-input:invalid-questions",
+              });
             }
 
             const userInputEvent: BridgeEvent = {
@@ -723,21 +963,11 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
                 };
               },
             });
-
-            if (response.denied) {
-              return {
-                behavior: "deny",
-                message: "User declined to answer questions.",
-              };
-            }
-
-            return {
-              behavior: "allow",
-              updatedInput: {
-                ...normalizedInput,
-                answers: response.answers ?? {},
-              },
-            };
+            return buildClaudeUserInputPermissionResult({
+              normalizedInput,
+              answers: response.answers,
+              denied: response.denied,
+            });
           }
 
           const approvalEvent: BridgeEvent = {
@@ -763,17 +993,11 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
               };
             },
           });
-
-          if (!approved) {
-            return {
-              behavior: "deny",
-              message: `User denied permission for ${toolName}.`,
-            };
-          }
-
-          return {
-            behavior: "allow",
-          };
+          return buildClaudeApprovalPermissionResult({
+            approved,
+            normalizedInput,
+            denialMessage: `User denied permission for ${toolName}.`,
+          });
         },
         sandbox: {
           enabled: claudeSandboxEnabled,

@@ -1,7 +1,10 @@
 import { FilePlus2, LoaderCircle, Square } from "lucide-react";
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Button, Input, Textarea } from "@/components/ui";
+import { Badge, Button, Command, CommandEmpty, CommandGroup, CommandItem, CommandList, Popover, PopoverAnchor, PopoverContent, Input, Textarea } from "@/components/ui";
+import type { CommandPaletteItem, CommandPaletteProviderNote } from "@/lib/commands";
+import { filterCommandPaletteItems, getSlashCommandSearchQuery } from "@/lib/commands";
 import { cn } from "@/lib/utils";
+import { getAcceptedCommandPaletteItem, getNextCommandSelectionIndex, NO_COMMAND_SELECTION } from "./prompt-input.utils";
 import { ModelSelector, type ModelSelectorOption } from "./model-selector";
 import { PermissionModeSelector, cyclePermissionMode, type PermissionModeValue } from "./permission-mode-selector";
 
@@ -15,6 +18,8 @@ interface PromptInputProps {
   projectFiles: string[];
   attachedFilePath?: string;
   permissionMode?: PermissionModeValue;
+  commandPaletteItems?: CommandPaletteItem[];
+  commandPaletteProviderNote?: CommandPaletteProviderNote;
   onValueChange: (value: string) => void;
   onModelSelect: (args: { selection: ModelSelectorOption }) => void;
   onAttachFileChange: (args: { filePath: string }) => void;
@@ -34,6 +39,8 @@ export function PromptInput(args: PromptInputProps) {
     projectFiles,
     attachedFilePath,
     permissionMode,
+    commandPaletteItems,
+    commandPaletteProviderNote,
     onValueChange,
     onModelSelect,
     onAttachFileChange,
@@ -43,10 +50,34 @@ export function PromptInput(args: PromptInputProps) {
   } = args;
   const [attachOpen, setAttachOpen] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
+  const [dismissedCommandQuery, setDismissedCommandQuery] = useState<string | null>(null);
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(NO_COMMAND_SELECTION);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const wasTurnActiveRef = useRef(Boolean(isTurnActive));
   const interactionsDisabled = Boolean(disabled || isTurnActive);
   const maxTextareaHeight = 240;
+  const commandQuery = useMemo(() => getSlashCommandSearchQuery(value), [value]);
+  const filteredCommandItems = useMemo(() => filterCommandPaletteItems({
+    items: commandPaletteItems ?? [],
+    query: commandQuery,
+  }), [commandPaletteItems, commandQuery]);
+  const indexedCommandItems = useMemo(
+    () => filteredCommandItems.map((item, index) => ({ item, index })),
+    [filteredCommandItems]
+  );
+  const staveCommandItems = useMemo(
+    () => indexedCommandItems.filter(({ item }) => item.source !== "provider_native"),
+    [indexedCommandItems]
+  );
+  const providerCommandItems = useMemo(
+    () => indexedCommandItems.filter(({ item }) => item.source === "provider_native"),
+    [indexedCommandItems]
+  );
+  const commandPaletteOpen = Boolean(
+    commandQuery
+    && dismissedCommandQuery !== commandQuery
+    && (filteredCommandItems.length > 0 || commandPaletteProviderNote)
+  );
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -78,6 +109,29 @@ export function PromptInput(args: PromptInputProps) {
     wasTurnActiveRef.current = isTurnNowActive;
   }, [isTurnActive]);
 
+  useEffect(() => {
+    if (dismissedCommandQuery && commandQuery !== dismissedCommandQuery) {
+      setDismissedCommandQuery(null);
+    }
+  }, [commandQuery, dismissedCommandQuery]);
+
+  useEffect(() => {
+    setSelectedCommandIndex(NO_COMMAND_SELECTION);
+  }, [commandQuery]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen) {
+      setSelectedCommandIndex(NO_COMMAND_SELECTION);
+      return;
+    }
+    setSelectedCommandIndex((current) => {
+      if (current === NO_COMMAND_SELECTION) {
+        return NO_COMMAND_SELECTION;
+      }
+      return Math.min(current, Math.max(filteredCommandItems.length - 1, 0));
+    });
+  }, [commandPaletteOpen, filteredCommandItems.length]);
+
   const filteredFiles = useMemo(() => {
     const normalized = fileFilter.trim().toLowerCase();
     if (!normalized) {
@@ -99,6 +153,15 @@ export function PromptInput(args: PromptInputProps) {
     await submitCurrentMessage();
   }
 
+  function applyCommandSelection(item: CommandPaletteItem) {
+    const leadingWhitespace = value.match(/^\s*/)?.[0] ?? "";
+    onValueChange(`${leadingWhitespace}${item.insertText}`);
+    setDismissedCommandQuery(null);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-3 rounded-xl border border-border/80 bg-card p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -117,34 +180,170 @@ export function PromptInput(args: PromptInputProps) {
           />
         ) : null}
       </div>
-      <Textarea
-        ref={textareaRef}
-        value={value}
-        disabled={interactionsDisabled}
-        onChange={(event) => {
-          onValueChange(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Tab" && event.shiftKey && permissionMode && onPermissionModeChange) {
-            event.preventDefault();
-            onPermissionModeChange(cyclePermissionMode({ providerId: selectedModel.providerId, current: permissionMode }));
-            return;
-          }
-          if (event.key !== "Enter") {
-            return;
-          }
-          if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
-            return;
-          }
-          if (event.nativeEvent.isComposing) {
-            return;
-          }
-          event.preventDefault();
-          void submitCurrentMessage();
-        }}
-        placeholder="Use / for commands, @ to search files (Enter to send)"
-        className="min-h-[104px] max-h-[240px] resize-none overflow-y-auto rounded-lg border-border/70 bg-background text-lg leading-8 md:text-lg"
-      />
+      <Popover open={commandPaletteOpen} modal={false}>
+        <PopoverAnchor asChild>
+          <div>
+            <Textarea
+              ref={textareaRef}
+              value={value}
+              disabled={interactionsDisabled}
+              onChange={(event) => {
+                onValueChange(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (commandPaletteOpen && filteredCommandItems.length > 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setSelectedCommandIndex((current) => getNextCommandSelectionIndex({
+                      currentIndex: current,
+                      itemCount: filteredCommandItems.length,
+                      direction: "next",
+                    }));
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setSelectedCommandIndex((current) => getNextCommandSelectionIndex({
+                      currentIndex: current,
+                      itemCount: filteredCommandItems.length,
+                      direction: "previous",
+                    }));
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    if (event.nativeEvent.isComposing) {
+                      return;
+                    }
+                    const selectedItem = getAcceptedCommandPaletteItem({
+                      items: filteredCommandItems,
+                      selectedIndex: selectedCommandIndex,
+                      triggerKey: event.key,
+                    });
+                    if (selectedItem) {
+                      event.preventDefault();
+                      applyCommandSelection(selectedItem);
+                      return;
+                    }
+                  }
+                }
+                if (commandPaletteOpen && event.key === "Escape") {
+                  event.preventDefault();
+                  setDismissedCommandQuery(commandQuery);
+                  return;
+                }
+                if (event.key === "Tab" && event.shiftKey && permissionMode && onPermissionModeChange) {
+                  event.preventDefault();
+                  onPermissionModeChange(cyclePermissionMode({ providerId: selectedModel.providerId, current: permissionMode }));
+                  return;
+                }
+                if (event.key !== "Enter") {
+                  return;
+                }
+                if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) {
+                  return;
+                }
+                if (event.nativeEvent.isComposing) {
+                  return;
+                }
+                event.preventDefault();
+                void submitCurrentMessage();
+              }}
+              placeholder="Use / for provider commands, /stave: for local commands, @ to search files (Enter to send)"
+              className="min-h-[104px] max-h-[240px] resize-none overflow-y-auto rounded-lg border-border/70 bg-background text-lg leading-8 md:text-lg"
+            />
+          </div>
+        </PopoverAnchor>
+        <PopoverContent
+          align="start"
+          side="top"
+          sideOffset={8}
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onInteractOutside={() => setDismissedCommandQuery(commandQuery)}
+          className="w-[min(34rem,calc(100vw-2rem))] gap-0 rounded-xl border border-border/80 bg-popover p-1 shadow-lg"
+        >
+          <Command shouldFilter={false} className="rounded-lg border border-border/60 bg-background/70 p-0">
+            <CommandList className="max-h-72">
+              {filteredCommandItems.length === 0 ? (
+                <CommandEmpty>No matching slash command.</CommandEmpty>
+              ) : (
+                <>
+                  {staveCommandItems.length > 0 ? (
+                    <CommandGroup heading="Stave commands">
+                      {staveCommandItems.map(({ item, index }) => (
+                        <CommandItem
+                          key={item.id}
+                          value={item.command}
+                          data-selected={index === selectedCommandIndex ? "" : undefined}
+                          className={cn(
+                            "items-start gap-3 rounded-md px-3 py-2",
+                            index === selectedCommandIndex && "bg-muted text-foreground"
+                          )}
+                          onMouseEnter={() => setSelectedCommandIndex(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyCommandSelection(item);
+                          }}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{item.command}</span>
+                              <Badge variant={item.source === "stave_builtin" ? "secondary" : "outline"} className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                                {item.source === "stave_builtin" ? "Stave" : "Custom"}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ) : null}
+                  {providerCommandItems.length > 0 ? (
+                    <CommandGroup heading={selectedModel.providerId === "claude-code" ? "Claude native commands" : "Provider commands"}>
+                      {providerCommandItems.map(({ item, index }) => (
+                        <CommandItem
+                          key={item.id}
+                          value={item.command}
+                          data-selected={index === selectedCommandIndex ? "" : undefined}
+                          className={cn(
+                            "items-start gap-3 rounded-md px-3 py-2",
+                            index === selectedCommandIndex && "bg-muted text-foreground"
+                          )}
+                          onMouseEnter={() => setSelectedCommandIndex(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applyCommandSelection(item);
+                          }}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{item.command}</span>
+                              <Badge variant="outline" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                                {selectedModel.providerId === "claude-code" ? "Claude" : "Provider"}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ) : null}
+                </>
+              )}
+            </CommandList>
+            {commandPaletteOpen ? (
+              <div className="border-t border-border/70 px-3 py-2.5 text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">Tab inserts highlighted command. Enter sends the current prompt.</p>
+                {commandPaletteProviderNote ? (
+                  <>
+                    <p className="mt-2 font-medium text-foreground">{commandPaletteProviderNote.title}</p>
+                    <p className="mt-1 whitespace-pre-line">{commandPaletteProviderNote.description}</p>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+          </Command>
+        </PopoverContent>
+      </Popover>
       {attachedFilePath ? (
         <div className="rounded-sm border border-border/80 bg-secondary/50 px-2 py-1.5 text-sm">
           Attached file: <span className="font-medium">{attachedFilePath}</span>

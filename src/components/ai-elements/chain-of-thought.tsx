@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, HTMLAttributes } from "react";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 import { Bot, Brain, CheckCircle2, ChevronDown, Circle, Info, LoaderCircle, Wrench } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -62,12 +62,6 @@ function StepIcon(args: { step: ChainOfThoughtStep }) {
 
 export function ChainOfThought({ className, isStreaming = false, defaultOpen = false, steps, ...props }: ChainOfThoughtProps) {
   const [open, setOpen] = useState(defaultOpen);
-
-  useEffect(() => {
-    if (isStreaming) {
-      setOpen(true);
-    }
-  }, [isStreaming]);
 
   const contextValue = useMemo(() => ({ isStreaming, open, setOpen }), [isStreaming, open]);
 
