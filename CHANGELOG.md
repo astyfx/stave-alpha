@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.5 - 2026-03-10
+
+- fixed chat markdown tables so GFM pipe-table syntax renders as actual table markup instead of plain text in assistant messages
+- moved message markdown rendering into a dedicated renderer with `remark-gfm` support and regression coverage for table output
+- switched markdown tables onto the shared shadcn table primitives and forced long cell content to wrap within the message bubble instead of causing horizontal overflow
+
 ## 0.0.4 - 2026-03-10
 
 - fixed Claude workspace path anchoring so relative paths like `./docs` stay rooted in the active Stave workspace instead of drifting to guessed sibling directories

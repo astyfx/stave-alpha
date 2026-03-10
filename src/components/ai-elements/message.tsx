@@ -1,7 +1,6 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, MouseEvent, ReactNode } from "react";
 import { createContext, useContext, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Paperclip, X } from "lucide-react";
-import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { Button, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { useAppStore } from "@/store/app.store";
@@ -12,16 +11,7 @@ import {
   CodeBlockHeader,
   CodeBlockTitle,
 } from "./code-block";
-
-function resolveMessageSizeClass(size: "base" | "lg" | "xl") {
-  if (size === "xl") {
-    return "text-xl";
-  }
-  if (size === "lg") {
-    return "text-lg";
-  }
-  return "text-base";
-}
+import { MarkdownMessage, resolveMessageSizeClass } from "./message-markdown";
 
 interface MessageProps extends HTMLAttributes<HTMLDivElement> {
   from: "user" | "assistant";
@@ -124,79 +114,24 @@ export function MessageResponse({ isStreaming, ...props }: MessageResponseProps)
   }
 
   return (
-    <div
-      className={cn(
-        "leading-7",
-        resolveMessageSizeClass(messageFontSize),
+    <MarkdownMessage
+      content={content}
+      isStreaming={isStreaming}
+      messageFontSize={messageFontSize}
+      messageCodeFontSize={messageCodeFontSize}
+      onFileLinkClick={handleFileLinkClick}
+      renderBlockCode={({ code, language }) => (
+        <CodeBlock code={code} language={language}>
+          <CodeBlockHeader>
+            <CodeBlockTitle>{language ?? "code"}</CodeBlockTitle>
+            <CodeBlockActions>
+              <CodeBlockCopyButton />
+            </CodeBlockActions>
+          </CodeBlockHeader>
+        </CodeBlock>
       )}
-      data-streaming={isStreaming ? "true" : undefined}
       {...props}
-    >
-      {isStreaming ? (
-        <div className="whitespace-pre-wrap break-words">{content}</div>
-      ) : (
-        <ReactMarkdown
-          components={{
-            p: ({ children }) => <p className="my-2 whitespace-pre-wrap first:mt-0 last:mb-0">{children}</p>,
-            ul: ({ children }) => (
-              <ul className="my-2 ml-5 list-disc pl-1 marker:text-muted-foreground [&_ol]:my-1 [&_ol]:ml-5 [&_ol]:list-decimal [&_ul]:my-1 [&_ul]:ml-5 [&_ul]:list-disc">
-                {children}
-              </ul>
-            ),
-            ol: ({ children }) => (
-              <ol className="my-2 ml-5 list-decimal pl-1 marker:text-muted-foreground [&_ol]:my-1 [&_ol]:ml-5 [&_ol]:list-decimal [&_ul]:my-1 [&_ul]:ml-5 [&_ul]:list-disc">
-                {children}
-              </ol>
-            ),
-            li: ({ children }) => <li className="my-1 marker:text-muted-foreground [&>p]:my-0">{children}</li>,
-            // Block code: detected by language class OR multiline content
-            // Inline code: single-line with no language class
-            code: ({ className, children }) => {
-              const lang = /language-(\w+)/.exec(className ?? "")?.[1];
-              const text = String(children);
-              const isBlock = Boolean(lang) || text.includes("\n");
-              if (isBlock) {
-                return (
-                  <CodeBlock code={text.replace(/\n$/, "")} language={lang}>
-                    <CodeBlockHeader>
-                      <CodeBlockTitle>{lang ?? "code"}</CodeBlockTitle>
-                      <CodeBlockActions>
-                        <CodeBlockCopyButton />
-                      </CodeBlockActions>
-                    </CodeBlockHeader>
-                  </CodeBlock>
-                );
-              }
-              return (
-                <code
-                  className={cn(
-                    "rounded bg-muted px-1 py-0.5 font-mono",
-                    resolveMessageSizeClass(messageCodeFontSize),
-                  )}
-                >
-                  {children}
-                </code>
-              );
-            },
-            // Unwrap <pre> — the code override above renders the full block
-            pre: ({ children }) => <>{children}</>,
-            a: ({ href, children }) => (
-              <a
-                href={href}
-                className="text-primary underline underline-offset-2"
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => void handleFileLinkClick({ event, href })}
-              >
-                {children}
-              </a>
-            ),
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      )}
-    </div>
+    />
   );
 }
 

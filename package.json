@@ -1,7 +1,7 @@
 {
   "name": "stave",
   "private": true,
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Stave: Agentic Coding IDE.",
   "author": "astyfx",
   "type": "module",
@@ -47,6 +47,7 @@
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.7.2",
     "react-virtuoso": "^4.14.1",
+    "remark-gfm": "^4.0.1",
     "shadcn": "^4.0.0",
     "shiki": "^4.0.1",
     "sonner": "^2.0.7",
