@@ -7,9 +7,11 @@ import {
   groupMessageParts,
   hasVisibleMessagePartContent,
   isPendingDiffStatus,
+  shouldRenderInlineToolPart,
   shouldRenderInlineSystemEvent,
   shouldAutoOpenToolGroup,
   shouldAutoOpenToolPart,
+  summarizeReplayOnlyToolParts,
   summarizeDiffLineChanges,
 } from "@/components/session/chat-panel.utils";
 
@@ -199,6 +201,13 @@ describe("getMessageBodyFallbackState", () => {
     })).toBe("content");
   });
 
+  test("treats replay-only tool turns as content after completion", () => {
+    expect(getMessageBodyFallbackState({
+      isActivelyStreaming: false,
+      renderableParts: [{ type: "tool_use", toolName: "bash", input: "ls", state: "output-available", output: "file.txt" }],
+    })).toBe("content");
+  });
+
   test("shows empty completed fallback only for truly empty completed turns", () => {
     expect(getMessageBodyFallbackState({
       isActivelyStreaming: false,
@@ -228,5 +237,32 @@ describe("system event visibility", () => {
       type: "system_event",
       content: "Response was cut off because the output limit was reached.",
     })).toBe(true);
+  });
+});
+
+describe("tool visibility", () => {
+  test("keeps only user-facing tool parts inline", () => {
+    expect(shouldRenderInlineToolPart({ toolName: "Read" })).toBe(false);
+    expect(shouldRenderInlineToolPart({ toolName: "agent" })).toBe(true);
+    expect(shouldRenderInlineToolPart({ toolName: "TodoWrite" })).toBe(true);
+    expect(hasVisibleMessagePartContent({ type: "tool_use", toolName: "bash", input: "ls", state: "output-available", output: "ok" })).toBe(false);
+    expect(hasVisibleMessagePartContent({ type: "tool_use", toolName: "agent", input: "{}", state: "output-available", output: "ok" })).toBe(true);
+  });
+
+  test("summarizes replay-only tool activity for compact chat rendering", () => {
+    expect(summarizeReplayOnlyToolParts([
+      { type: "tool_use", toolName: "Read", input: "a", state: "output-available", output: "ok" },
+      { type: "tool_use", toolName: "Read", input: "b", state: "output-error", output: "boom" },
+      { type: "tool_use", toolName: "Bash", input: "ls", state: "input-streaming", output: "file.txt" },
+      { type: "tool_use", toolName: "agent", input: "{}", state: "output-available", output: "skip" },
+    ])).toEqual({
+      totalActions: 3,
+      activeActions: 1,
+      failedActions: 1,
+      byTool: [
+        { toolName: "Read", count: 2 },
+        { toolName: "Bash", count: 1 },
+      ],
+    });
   });
 });

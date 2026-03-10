@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import { startTransition, useEffect, useMemo, useState } from "react";
 import { Activity, ChevronDown, ChevronRight, Clock3, TriangleAlert } from "lucide-react";
-import { Badge, Card } from "@/components/ui";
+import { Badge, Button, Card } from "@/components/ui";
 import type { TaskProviderConversationState } from "@/lib/db/workspaces.db";
 import {
   listTaskTurns,
@@ -35,6 +36,8 @@ interface TurnDiagnosticsState {
   requestSnapshot: PersistedTurnRequestSnapshot | null;
 }
 
+type DrawerDiagnosticsView = "overview" | "replay";
+
 function getStatusBadgeVariant(status: "running" | "completed" | "error" | "truncated" | "interrupted") {
   switch (status) {
     case "error":
@@ -62,6 +65,185 @@ function getStatusLabel(status: "running" | "completed" | "error" | "truncated" 
   }
 }
 
+function DiagnosticsViewToggle(args: {
+  value: DrawerDiagnosticsView;
+  onChange: (value: DrawerDiagnosticsView) => void;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <Button
+        type="button"
+        size="sm"
+        variant={args.value === "overview" ? "secondary" : "outline"}
+        onClick={() => args.onChange("overview")}
+      >
+        Overview
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={args.value === "replay" ? "secondary" : "outline"}
+        onClick={() => args.onChange("replay")}
+      >
+        Replay
+      </Button>
+    </div>
+  );
+}
+
+function ReplayEventDetailBlock(args: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("rounded-md border border-border/70 bg-background/50 px-3 py-2", args.className)}>
+      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{args.label}</p>
+      <div className="mt-1 min-w-0 text-sm text-foreground">{args.children}</div>
+    </div>
+  );
+}
+
+function ReplayEventDetail(args: { item: ReplayedTurnEvent }) {
+  const { event } = args.item;
+
+  switch (event.type) {
+    case "text":
+    case "thinking":
+      return (
+        <ReplayEventDetailBlock label={event.type === "thinking" ? "Reasoning chunk" : "Text chunk"}>
+          <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-sm">{event.text}</pre>
+        </ReplayEventDetailBlock>
+      );
+    case "tool":
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant={event.state === "output-error" ? "destructive" : event.state === "input-streaming" ? "warning" : "secondary"}>
+              {event.state}
+            </Badge>
+            {event.toolUseId ? <Badge variant="outline">{event.toolUseId}</Badge> : null}
+          </div>
+          <ReplayEventDetailBlock label="Tool input">
+            <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-xs">{event.input}</pre>
+          </ReplayEventDetailBlock>
+          {event.output?.trim() ? (
+            <ReplayEventDetailBlock label={event.state === "input-streaming" ? "Live output" : "Tool output"}>
+              <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-xs">{event.output}</pre>
+            </ReplayEventDetailBlock>
+          ) : null}
+        </div>
+      );
+    case "tool_result":
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {event.isError ? <Badge variant="destructive">Error</Badge> : null}
+            {event.isPartial ? <Badge variant="warning">Partial</Badge> : null}
+            <Badge variant="outline">{event.tool_use_id}</Badge>
+          </div>
+          <ReplayEventDetailBlock label="Result output">
+            <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-xs">{event.output}</pre>
+          </ReplayEventDetailBlock>
+        </div>
+      );
+    case "diff":
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{event.filePath}</Badge>
+            {event.status ? <Badge variant={event.status === "pending" ? "warning" : "secondary"}>{event.status}</Badge> : null}
+          </div>
+          <ReplayEventDetailBlock label="Change payload">
+            <p>old {event.oldContent.length} chars · new {event.newContent.length} chars</p>
+          </ReplayEventDetailBlock>
+        </div>
+      );
+    case "approval":
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{event.toolName}</Badge>
+            <Badge variant="secondary">{event.requestId}</Badge>
+          </div>
+          <ReplayEventDetailBlock label="Approval request">
+            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{event.description}</p>
+          </ReplayEventDetailBlock>
+        </div>
+      );
+    case "user_input":
+      return (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="outline">{event.toolName}</Badge>
+            <Badge variant="secondary">{event.requestId}</Badge>
+          </div>
+          <ReplayEventDetailBlock label="Questions">
+            <div className="space-y-2">
+              {event.questions.map((question, index) => (
+                <div key={`${question.header}-${index}`} className="rounded-sm border border-border/70 bg-card/60 px-2 py-1.5">
+                  <p className="font-medium">{question.header}</p>
+                  <p className="mt-0.5 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-muted-foreground">{question.question}</p>
+                </div>
+              ))}
+            </div>
+          </ReplayEventDetailBlock>
+        </div>
+      );
+    case "provider_conversation":
+      return (
+        <ReplayEventDetailBlock label="Provider conversation">
+          <p className="font-mono text-xs break-words [overflow-wrap:anywhere]">{event.nativeConversationId}</p>
+        </ReplayEventDetailBlock>
+      );
+    case "usage":
+      return (
+        <ReplayEventDetailBlock label="Token and cost snapshot">
+          <p>
+            input {event.inputTokens} · output {event.outputTokens}
+            {event.cacheReadTokens != null ? ` · cache read ${event.cacheReadTokens}` : ""}
+            {event.cacheCreationTokens != null ? ` · cache write ${event.cacheCreationTokens}` : ""}
+            {event.totalCostUsd != null ? ` · $${event.totalCostUsd.toFixed(4)}` : ""}
+          </p>
+        </ReplayEventDetailBlock>
+      );
+    case "prompt_suggestions":
+      return (
+        <ReplayEventDetailBlock label="Prompt suggestions">
+          <div className="flex flex-wrap gap-2">
+            {event.suggestions.map((suggestion) => (
+              <Badge key={suggestion} variant="outline">{suggestion}</Badge>
+            ))}
+          </div>
+        </ReplayEventDetailBlock>
+      );
+    case "plan_ready":
+      return (
+        <ReplayEventDetailBlock label="Plan output">
+          <pre className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-sm">{event.planText}</pre>
+        </ReplayEventDetailBlock>
+      );
+    case "system":
+      return (
+        <ReplayEventDetailBlock label="System notice">
+          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{event.content}</p>
+        </ReplayEventDetailBlock>
+      );
+    case "error":
+      return (
+        <ReplayEventDetailBlock label="Error" className="border-destructive/30 bg-destructive/8">
+          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-destructive">{event.message}</p>
+        </ReplayEventDetailBlock>
+      );
+    case "done":
+      return (
+        <ReplayEventDetailBlock label="Completion">
+          <p>{event.stop_reason ? `stop reason: ${event.stop_reason}` : "Turn completed."}</p>
+        </ReplayEventDetailBlock>
+      );
+  }
+}
+
 export function TurnDiagnosticsPanel(args: TurnDiagnosticsPanelProps) {
   const {
     taskId,
@@ -80,6 +262,7 @@ export function TurnDiagnosticsPanel(args: TurnDiagnosticsPanelProps) {
     requestSnapshot: null,
   });
   const [open, setOpen] = useState(defaultOpen);
+  const [drawerView, setDrawerView] = useState<DrawerDiagnosticsView>("overview");
   const [timeAnchor, setTimeAnchor] = useState(() => Date.now());
 
   useEffect(() => {
@@ -162,6 +345,7 @@ export function TurnDiagnosticsPanel(args: TurnDiagnosticsPanelProps) {
     [activeTurnId, state.latestTurn, state.replay]
   );
   const timeline = useMemo(() => state.replay.slice(-12), [state.replay]);
+  const replayEvents = useMemo(() => state.replay.slice(-80), [state.replay]);
   const currentNativeConversationId = useMemo(
     () => getProviderConversationId({ conversations: providerConversations, providerId: taskProvider }),
     [providerConversations, taskProvider]
@@ -230,134 +414,174 @@ export function TurnDiagnosticsPanel(args: TurnDiagnosticsPanelProps) {
         </button>
         {open ? (
           <div className="border-t border-border/70 bg-card/40 px-3 py-3">
-            {summary ? (
-              <div className="grid gap-2 sm:grid-cols-4">
-                <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Content</p>
-                  <p className="mt-1 text-sm text-foreground">
-                    text {summary.textEvents} · reasoning {summary.thinkingEvents}
-                  </p>
-                </div>
-                <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Actions</p>
-                  <p className="mt-1 text-sm text-foreground">
-                    tools {summary.toolEvents} · approvals {summary.approvalEvents} · input {summary.inputEvents}
-                  </p>
-                </div>
-                <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Signals</p>
-                  <p className="mt-1 text-sm text-foreground">
-                    system {summary.systemEvents} · errors {summary.errorEvents}
-                  </p>
-                </div>
-                <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
-                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Native conversation</p>
-                  <p className="mt-1 truncate font-mono text-sm text-foreground">
-                    {currentNativeConversationId ?? "Not started"}
-                  </p>
-                </div>
-              </div>
+            {surface === "drawer" ? (
+              <DiagnosticsViewToggle value={drawerView} onChange={setDrawerView} />
             ) : null}
-            {summary?.status === "interrupted" ? (
-              <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
-                This turn was interrupted because Stave was closed before the provider finished.
-              </div>
-            ) : null}
-            <div className="mt-3 rounded-md border border-border/70 bg-background/50 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Provider sessions</p>
-                <Badge variant="secondary">{`Current: ${getProviderLabel({ providerId: taskProvider })}`}</Badge>
-              </div>
-              {providerConversationRows.length === 0 ? (
-                <p className="mt-1 text-sm text-muted-foreground">No provider-native ids recorded for this task yet.</p>
-              ) : (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {providerConversationRows.map((row) => (
-                    <div
-                      key={row.providerId}
-                      className={cn(
-                        "rounded-md border px-2.5 py-2",
-                        row.providerId === taskProvider
-                          ? "border-border bg-card"
-                          : "border-border/70 bg-muted/30"
-                      )}
-                    >
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                        {getProviderConversationLabel({ providerId: row.providerId })}
-                      </p>
-                      <p className="mt-1 max-w-[24rem] truncate font-mono text-sm text-foreground">
-                        {row.nativeConversationId}
+            {surface !== "drawer" || drawerView === "overview" ? (
+              <>
+                {summary ? (
+                  <div className="grid gap-2 sm:grid-cols-4">
+                    <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Content</p>
+                      <p className="mt-1 text-sm text-foreground">
+                        text {summary.textEvents} · reasoning {summary.thinkingEvents}
                       </p>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="mt-3 rounded-md border border-border/70 bg-background/50 px-3 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Request snapshot</p>
-                {snapshotTargetProviderLabel ? <Badge variant="outline">{snapshotTargetProviderLabel}</Badge> : null}
-                {snapshotConversation?.target.model ? <Badge variant="secondary">{snapshotConversation.target.model}</Badge> : null}
-              </div>
-              {!state.requestSnapshot ? (
-                <p className="mt-1 text-sm text-muted-foreground">No persisted request snapshot for this turn.</p>
-              ) : (
-                <>
-                  <div className="mt-2 grid gap-2 sm:grid-cols-4">
-                    <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Mode</p>
-                      <p className="mt-1 text-sm text-foreground">{snapshotConversation?.mode ?? "unknown"}</p>
+                    <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Actions</p>
+                      <p className="mt-1 text-sm text-foreground">
+                        tools {summary.toolEvents} · approvals {summary.approvalEvents} · input {summary.inputEvents}
+                      </p>
                     </div>
-                    <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">History</p>
-                      <p className="mt-1 text-sm text-foreground">{snapshotConversation?.history.length ?? 0} messages</p>
+                    <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Signals</p>
+                      <p className="mt-1 text-sm text-foreground">
+                        system {summary.systemEvents} · errors {summary.errorEvents}
+                      </p>
                     </div>
-                    <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Context parts</p>
-                      <p className="mt-1 text-sm text-foreground">{snapshotConversation?.contextParts.length ?? 0} parts</p>
-                    </div>
-                    <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Resume id</p>
+                    <div className="rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Native conversation</p>
                       <p className="mt-1 truncate font-mono text-sm text-foreground">
-                        {snapshotConversation?.resume?.nativeConversationId ?? "None"}
+                        {currentNativeConversationId ?? "Not started"}
                       </p>
                     </div>
                   </div>
-                  <div className="mt-2 rounded-md border border-border/70 bg-card/50 px-3 py-2">
-                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Fallback prompt</p>
-                    <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{snapshotPromptPreview}</p>
+                ) : null}
+                {summary?.status === "interrupted" ? (
+                  <div className="mt-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-foreground">
+                    This turn was interrupted because Stave was closed before the provider finished.
                   </div>
-                </>
-              )}
-            </div>
-            <div className="mt-3">
-              <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">Timeline</p>
-              <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border/70 bg-background/50 p-2">
-                {timeline.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No persisted events yet.</p>
+                ) : null}
+                <div className="mt-3 rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Provider sessions</p>
+                    <Badge variant="secondary">{`Current: ${getProviderLabel({ providerId: taskProvider })}`}</Badge>
+                  </div>
+                  {providerConversationRows.length === 0 ? (
+                    <p className="mt-1 text-sm text-muted-foreground">No provider-native ids recorded for this task yet.</p>
+                  ) : (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {providerConversationRows.map((row) => (
+                        <div
+                          key={row.providerId}
+                          className={cn(
+                            "rounded-md border px-2.5 py-2",
+                            row.providerId === taskProvider
+                              ? "border-border bg-card"
+                              : "border-border/70 bg-muted/30"
+                          )}
+                        >
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                            {getProviderConversationLabel({ providerId: row.providerId })}
+                          </p>
+                          <p className="mt-1 max-w-[24rem] truncate font-mono text-sm text-foreground">
+                            {row.nativeConversationId}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 rounded-md border border-border/70 bg-background/50 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Request snapshot</p>
+                    {snapshotTargetProviderLabel ? <Badge variant="outline">{snapshotTargetProviderLabel}</Badge> : null}
+                    {snapshotConversation?.target.model ? <Badge variant="secondary">{snapshotConversation.target.model}</Badge> : null}
+                  </div>
+                  {!state.requestSnapshot ? (
+                    <p className="mt-1 text-sm text-muted-foreground">No persisted request snapshot for this turn.</p>
+                  ) : (
+                    <>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-4">
+                        <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Mode</p>
+                          <p className="mt-1 text-sm text-foreground">{snapshotConversation?.mode ?? "unknown"}</p>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">History</p>
+                          <p className="mt-1 text-sm text-foreground">{snapshotConversation?.history.length ?? 0} messages</p>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Context parts</p>
+                          <p className="mt-1 text-sm text-foreground">{snapshotConversation?.contextParts.length ?? 0} parts</p>
+                        </div>
+                        <div className="rounded-md border border-border/70 bg-card/50 px-3 py-2">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Resume id</p>
+                          <p className="mt-1 truncate font-mono text-sm text-foreground">
+                            {snapshotConversation?.resume?.nativeConversationId ?? "None"}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-2 rounded-md border border-border/70 bg-card/50 px-3 py-2">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Fallback prompt</p>
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm text-foreground">{snapshotPromptPreview}</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="mt-3">
+                  <p className="mb-2 text-[11px] uppercase tracking-wide text-muted-foreground">Timeline</p>
+                  <div className="max-h-56 space-y-1 overflow-y-auto rounded-md border border-border/70 bg-background/50 p-2">
+                    {timeline.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No persisted events yet.</p>
+                    ) : (
+                      timeline.map((item) => (
+                        <div
+                          key={item.persisted.id}
+                          className={cn(
+                            "flex items-start justify-between gap-3 rounded-sm px-2 py-1.5 text-sm",
+                            item.event.type === "error" && "bg-destructive/10 text-destructive"
+                          )}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium">{formatTurnEventLabel({ event: item.event })}</p>
+                            <p className="text-xs text-muted-foreground">
+                              seq {item.persisted.sequence} · {formatTaskUpdatedAt({ value: item.persisted.createdAt, now: timeAnchor })}
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="shrink-0">
+                            {item.event.type}
+                          </Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-2">
+                {replayEvents.length === 0 ? (
+                  <div className="rounded-md border border-border/70 bg-background/50 px-3 py-3 text-sm text-muted-foreground">
+                    No persisted replay events yet.
+                  </div>
                 ) : (
-                  timeline.map((item) => (
+                  replayEvents.map((item) => (
                     <div
                       key={item.persisted.id}
                       className={cn(
-                        "flex items-start justify-between gap-3 rounded-sm px-2 py-1.5 text-sm",
-                        item.event.type === "error" && "bg-destructive/10 text-destructive"
+                        "rounded-md border border-border/70 bg-background/50 px-3 py-3",
+                        item.event.type === "error" && "border-destructive/30 bg-destructive/6"
                       )}
                     >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{formatTurnEventLabel({ event: item.event })}</p>
-                        <p className="text-xs text-muted-foreground">
-                          seq {item.persisted.sequence} · {formatTaskUpdatedAt({ value: item.persisted.createdAt, now: timeAnchor })}
-                        </p>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-foreground">{formatTurnEventLabel({ event: item.event })}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            seq {item.persisted.sequence} · {formatTaskUpdatedAt({ value: item.persisted.createdAt, now: timeAnchor })}
+                          </p>
+                        </div>
+                        <Badge variant={item.event.type === "error" ? "destructive" : "outline"} className="shrink-0">
+                          {item.event.type}
+                        </Badge>
                       </div>
-                      <Badge variant="outline" className="shrink-0">
-                        {item.event.type}
-                      </Badge>
+                      <div className="mt-3">
+                        <ReplayEventDetail item={item} />
+                      </div>
                     </div>
                   ))
                 )}
               </div>
-            </div>
+            )}
           </div>
         ) : null}
       </Card>

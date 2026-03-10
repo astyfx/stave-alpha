@@ -44,9 +44,11 @@ import {
   groupMessageParts,
   hasVisibleMessagePartContent,
   isPendingDiffStatus,
+  shouldRenderInlineToolPart,
   shouldRenderInlineSystemEvent,
   shouldAutoOpenToolGroup,
   shouldAutoOpenToolPart,
+  summarizeReplayOnlyToolParts,
   summarizeDiffLineChanges,
 } from "@/components/session/chat-panel.utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
@@ -454,11 +456,61 @@ function isTodoToolPart(args: { toolName: string }) {
   return args.toolName.trim().toLowerCase() === "todowrite";
 }
 
+function toToolDisplayName(toolName: string) {
+  return toolName
+    .trim()
+    .replace(/^tool[-_:]?/i, "")
+    .replaceAll(/[_-]+/g, " ")
+    || "Tool";
+}
+
+function BackgroundActionsSummary(args: { parts: MessagePart[] }) {
+  const summary = useMemo(() => summarizeReplayOnlyToolParts(args.parts), [args.parts]);
+
+  if (summary.totalActions === 0) {
+    return null;
+  }
+
+  const statusLabel = summary.activeActions > 0
+    ? `${summary.activeActions} running`
+    : summary.failedActions > 0
+    ? `${summary.failedActions} with issues`
+    : "Recorded";
+
+  return (
+    <Card className="gap-3 border-dashed border-border/80 bg-muted/20 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">
+            {summary.totalActions} {summary.totalActions === 1 ? "background action" : "background actions"}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Generic tool activity was moved out of the chat stream. Open Session Replay for inputs, outputs, and the full event timeline.
+          </p>
+        </div>
+        <Badge variant={summary.activeActions > 0 ? "warning" : summary.failedActions > 0 ? "destructive" : "secondary"}>
+          {statusLabel}
+        </Badge>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {summary.byTool.slice(0, 5).map((item) => (
+          <Badge key={item.toolName} variant="outline">
+            {toToolDisplayName(item.toolName)} x{item.count}
+          </Badge>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 function buildChainOfThoughtSteps(parts: MessagePart[]): ChainOfThoughtStep[] {
   const steps: ChainOfThoughtStep[] = [];
   parts.forEach((part, index) => {
     if (part.type === "tool_use") {
       const isSubagent = isSubagentToolPart({ toolName: part.toolName });
+      if (!isSubagent) {
+        return;
+      }
       const subagentInput = isSubagent ? parseSubagentToolInput({ input: part.input }) : null;
       steps.push({
         id: `tool-${index}`,
@@ -510,6 +562,10 @@ function MessageBody(args: {
   const hasChainOfThought = chainOfThoughtSteps.length > 0;
   const showChainOfThought = hasChainOfThought && !hasReasoning;
   const segments = useMemo(() => groupMessageParts(visibleParts), [visibleParts]);
+  const replayOnlyToolParts = useMemo(
+    () => renderableParts.filter((part) => part.type === "tool_use" && !shouldRenderInlineToolPart({ toolName: part.toolName })),
+    [renderableParts]
+  );
   const lastTextPartIndex = useMemo(
     () => visibleParts.map((p, i) => (p.type === "text" ? i : -1)).filter((i) => i !== -1).at(-1),
     [visibleParts]
@@ -541,6 +597,11 @@ function MessageBody(args: {
         </Reasoning>
       ) : null}
       {showChainOfThought ? <ChainOfThought isStreaming={isStreaming} steps={chainOfThoughtSteps} className={hasReasoning ? "mt-2" : undefined} /> : null}
+      {replayOnlyToolParts.length > 0 ? (
+        <div className={cn("mt-2", !hasReasoning && !showChainOfThought && "mt-0")}>
+          <BackgroundActionsSummary parts={replayOnlyToolParts} />
+        </div>
+      ) : null}
       {segments.map((segment) => {
         if (segment.kind === "tools") {
           const toolStates = segment.parts.map((p) => (p.type === "tool_use" ? p.state : undefined));

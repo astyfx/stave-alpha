@@ -23,6 +23,17 @@ function isTodoToolPart(args: { toolName: string }) {
   return args.toolName.trim().toLowerCase() === "todowrite";
 }
 
+export function shouldRenderInlineToolPart(args: { toolName: string }) {
+  return isSubagentToolPart(args) || isTodoToolPart(args);
+}
+
+export interface ReplayOnlyToolSummary {
+  totalActions: number;
+  activeActions: number;
+  failedActions: number;
+  byTool: Array<{ toolName: string; count: number }>;
+}
+
 function toLineArray(text: string) {
   return text.length === 0 ? [] : text.split("\n");
 }
@@ -198,12 +209,51 @@ export function shouldRenderInlineSystemEvent(args: { content: string }): boolea
   return !normalized.includes("failed");
 }
 
+export function summarizeReplayOnlyToolParts(parts: MessagePart[]): ReplayOnlyToolSummary {
+  const counts = new Map<string, number>();
+  let totalActions = 0;
+  let activeActions = 0;
+  let failedActions = 0;
+
+  for (const part of parts) {
+    if (part.type !== "tool_use" || shouldRenderInlineToolPart({ toolName: part.toolName })) {
+      continue;
+    }
+
+    totalActions += 1;
+    if (part.state === "input-streaming") {
+      activeActions += 1;
+    }
+    if (part.state === "output-error") {
+      failedActions += 1;
+    }
+
+    const normalizedName = part.toolName.trim() || "Tool";
+    counts.set(normalizedName, (counts.get(normalizedName) ?? 0) + 1);
+  }
+
+  return {
+    totalActions,
+    activeActions,
+    failedActions,
+    byTool: [...counts.entries()]
+      .map(([toolName, count]) => ({ toolName, count }))
+      .sort((left, right) => (
+        right.count - left.count
+        || left.toolName.localeCompare(right.toolName)
+      )),
+  };
+}
+
 export function hasVisibleMessagePartContent(part: MessagePart): boolean {
   if (part.type === "thinking") {
     return false;
   }
   if (part.type === "text") {
     return part.text.trim().length > 0;
+  }
+  if (part.type === "tool_use") {
+    return shouldRenderInlineToolPart({ toolName: part.toolName });
   }
   if (part.type === "system_event") {
     return shouldRenderInlineSystemEvent({ content: part.content });
@@ -228,13 +278,19 @@ export function getMessageBodyFallbackState(args: {
   const reasoningParts = args.renderableParts.filter((part) => part.type === "thinking");
   const visibleParts = args.renderableParts.filter(hasVisibleMessagePartContent);
   const hasSystemEventParts = args.renderableParts.some((part) => part.type === "system_event");
+  const hasReplayOnlyToolParts = args.renderableParts.some((part) => (
+    part.type === "tool_use" && !shouldRenderInlineToolPart({ toolName: part.toolName })
+  ));
 
   if (args.isActivelyStreaming && visibleParts.length === 0 && reasoningParts.length === 0) {
+    if (hasSystemEventParts || hasReplayOnlyToolParts) {
+      return "content";
+    }
     return "streaming-placeholder";
   }
 
   if (!args.isActivelyStreaming && visibleParts.length === 0 && reasoningParts.length === 0) {
-    if (hasSystemEventParts) {
+    if (hasSystemEventParts || hasReplayOnlyToolParts) {
       return "content";
     }
     return "empty-completed";
