@@ -8,7 +8,7 @@ import { TerminalDock } from "@/components/layout/TerminalDock";
 import { Toaster } from "@/components/ui";
 import { getNextProviderId } from "@/lib/providers/model-catalog";
 import { RenderProfiler } from "@/lib/render-profiler";
-import { useAppStore } from "@/store/app.store";
+import { MIN_EDITOR_PANEL_WIDTH, useAppStore } from "@/store/app.store";
 import { EditorMainPanel } from "@/components/layout/EditorMainPanel";
 
 const EditorPanel = lazy(() =>
@@ -274,9 +274,10 @@ export function AppShell() {
                         const explorerWidth = sidebarOverlayVisible ? explorerPanelWidth : 0;
                         const separators = sidebarOverlayVisible ? 10 : 5;
                         const chatMinWidth = 420;
-                        const maxEditor = Math.max(320, containerWidth - chatMinWidth - explorerWidth - separators);
+                        const maxEditor = Math.max(0, containerWidth - chatMinWidth - explorerWidth - separators);
+                        const minEditor = Math.min(MIN_EDITOR_PANEL_WIDTH, maxEditor);
                         const delta = startX - moveEvent.clientX;
-                        const next = Math.max(320, Math.min(maxEditor, startWidth + delta));
+                        const next = Math.max(minEditor, Math.min(maxEditor, startWidth + delta));
                         scheduleLayoutResizePatch("editorPanelWidth", next);
                       };
                       const onUp = () => {
@@ -288,7 +289,7 @@ export function AppShell() {
                       window.addEventListener("mouseup", onUp);
                     }}
                   />
-                  <div className="hidden h-full lg:block" style={{ width: `${editorPanelWidth}px` }}>
+                  <div className="hidden h-full min-w-0 lg:block" style={{ width: `${editorPanelWidth}px` }}>
                     <RenderProfiler id="EditorMainPanel" thresholdMs={10}>
                       <EditorMainPanel />
                     </RenderProfiler>
@@ -323,7 +324,7 @@ export function AppShell() {
                     }}
                   />
                   <Suspense fallback={<aside className="rounded-lg border border-border/80 bg-card p-3 text-sm text-muted-foreground shadow-sm" style={{ width: `${explorerPanelWidth}px` }}>Loading panel...</aside>}>
-                    <div className="hidden h-full lg:block" style={{ width: `${explorerPanelWidth}px` }}>
+                    <div className="hidden h-full min-w-0 lg:block" style={{ width: `${explorerPanelWidth}px` }}>
                       <RenderProfiler id="EditorPanel" thresholdMs={8}>
                         <EditorPanel />
                       </RenderProfiler>

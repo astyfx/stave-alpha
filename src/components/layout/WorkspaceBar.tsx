@@ -261,8 +261,8 @@ export function WorkspaceBar() {
   }
 
   return (
-    <div data-testid="workspace-bar" className="relative z-20 flex h-14 items-center justify-between px-3.5 py-2.5 text-sm">
-      <div className="flex items-center gap-2 overflow-hidden">
+    <div data-testid="workspace-bar" className="relative z-20 flex h-14 items-center justify-between gap-3 px-3.5 py-2.5 text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -385,7 +385,7 @@ export function WorkspaceBar() {
         </TooltipProvider>
       </div>
       <TooltipProvider>
-        <div className="flex items-center gap-1 overflow-x-auto">
+        <div className="flex shrink-0 items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

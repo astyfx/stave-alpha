@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { SandboxMode, ApprovalMode, ModelReasoningEffort } from "@openai/codex-sdk";
 import { parseWorktreePathByBranch } from "../src/lib/source-control-worktrees";
+import { buildSourceControlDiffPreview, resolveSourceControlDiffPaths } from "../src/lib/source-control-diff";
 import type { BridgeEvent } from "../electron/providers/types";
 import { streamClaudeWithSdk } from "../electron/providers/claude-sdk-runtime";
 import { streamCodexWithSdk } from "../electron/providers/codex-sdk-runtime";
@@ -95,6 +97,38 @@ function hasConflictItems(args: { items: Array<{ code: string; path: string }> }
     const code = item.code;
     return code.includes("U") || code === "AA" || code === "DD";
   });
+}
+
+function toGitPathspecArg(paths: string[]) {
+  return paths.map((filePath) => JSON.stringify(filePath)).join(" ");
+}
+
+async function readGitHeadFile(args: { cwd?: string; filePath: string }) {
+  const result = await runCommand({
+    cmd: `git show HEAD:${JSON.stringify(args.filePath)}`,
+    cwd: args.cwd,
+  });
+  return result.ok ? result.stdout : "";
+}
+
+async function readWorkingTreeFile(args: { cwd?: string; filePath: string }) {
+  const rootPath = path.resolve(args.cwd ?? process.cwd());
+  const absolutePath = path.resolve(rootPath, args.filePath);
+  const relative = path.relative(rootPath, absolutePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return "";
+  }
+
+  const file = Bun.file(absolutePath);
+  if (!(await file.exists())) {
+    return "";
+  }
+
+  try {
+    return await file.text();
+  } catch {
+    return "";
+  }
 }
 
 const server = Bun.serve({
@@ -274,17 +308,23 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/scm/diff" && req.method === "POST") {
       const body = await readJson<{ cwd?: string; path: string }>(req);
-      const [staged, unstaged] = await Promise.all([
-        runCommand({ cmd: `git diff --cached -- ${JSON.stringify(body.path)}`, cwd: body.cwd }),
-        runCommand({ cmd: `git diff -- ${JSON.stringify(body.path)}`, cwd: body.cwd }),
+      const paths = resolveSourceControlDiffPaths({ rawPath: body.path });
+      const pathspecArg = toGitPathspecArg(paths.pathspecs);
+      const [staged, unstaged, oldContent, newContent] = await Promise.all([
+        runCommand({ cmd: `git diff --cached -- ${pathspecArg}`, cwd: body.cwd }),
+        runCommand({ cmd: `git diff -- ${pathspecArg}`, cwd: body.cwd }),
+        readGitHeadFile({ cwd: body.cwd, filePath: paths.headPath }),
+        readWorkingTreeFile({ cwd: body.cwd, filePath: paths.workingTreePath }),
       ]);
-      const content = [
-        staged.stdout ? `# Staged\n${staged.stdout}` : "",
-        unstaged.stdout ? `# Unstaged\n${unstaged.stdout}` : "",
-      ].filter(Boolean).join("\n\n");
+      const content = buildSourceControlDiffPreview({
+        stagedPatch: staged.stdout,
+        unstagedPatch: unstaged.stdout,
+      });
       return json({
         ok: staged.ok || unstaged.ok,
-        content: content || "No diff output.",
+        content,
+        oldContent,
+        newContent,
         stderr: [staged.stderr, unstaged.stderr].filter(Boolean).join("\n").trim(),
       });
     }

@@ -1,5 +1,5 @@
 import MonacoEditor, { DiffEditor, type Monaco } from "@monaco-editor/react";
-import { Columns2, FileCode2, PenLine, Save, Send, X } from "lucide-react";
+import { AlignJustify, Columns2, FileCode2, PenLine, Save, Send, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useAppStore } from "@/store/app.store";
@@ -7,7 +7,8 @@ import { Badge, Button, Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyT
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { ConfirmDialog } from "@/components/layout/ConfirmDialog";
 import { copyTextToClipboard } from "@/lib/clipboard";
-import { releaseDiffEditorModels, type DiffEditorModelOwner } from "./editor-main-panel.utils";
+import { cn } from "@/lib/utils";
+import { buildDiffEditorModelPath, releaseDiffEditorModels, type DiffEditorModelOwner } from "./editor-main-panel.utils";
 
 type MonacoDisposable = { dispose(): void };
 
@@ -291,6 +292,7 @@ export function EditorMainPanel() {
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const monacoRef = useRef<Monaco | null>(null);
   const diffEditorRef = useRef<DiffEditorModelOwner | null>(null);
+  const activeDiffTabIdRef = useRef<string | null>(null);
 
   const activeTab = editorTabs.find((tab) => tab.id === activeEditorTabId) ?? null;
   const isImageTab = (tab: { kind?: "text" | "image"; language: string } | null) =>
@@ -301,13 +303,14 @@ export function EditorMainPanel() {
   const monacoTheme = isDarkMode ? "vs-dark" : "vs";
   const activeModelPath = activeTab ? toMonacoModelPath(activeTab.filePath) : undefined;
   const showDiffDisplayControls = Boolean(editorDiffMode && activeTab?.originalContent != null && !activeTabIsImage);
-  const activeDiffSessionKey = showDiffDisplayControls && activeTab ? `${activeTab.id}:${activeModelPath ?? "file:///unknown"}` : null;
+  const activeDiffSessionKey = showDiffDisplayControls && activeTab ? activeTab.id : null;
   const shouldLoadWorkspaceSupport = Boolean(
     workspaceRootPath
     && activeTab
     && !activeTabIsImage
     && supportsWorkspaceTypeLibraries(activeTab.language),
   );
+  activeDiffTabIdRef.current = showDiffDisplayControls && activeTab ? activeTab.id : null;
 
   function configureMonaco(monaco: Monaco) {
     monacoRef.current = monaco;
@@ -426,7 +429,7 @@ export function EditorMainPanel() {
   }
 
   return (
-    <section data-testid="editor-main" className="flex h-full min-h-0 flex-1 flex-col rounded-lg border border-border/80 bg-card shadow-sm">
+    <section data-testid="editor-main" className="flex h-full min-h-0 min-w-0 w-full flex-1 flex-col rounded-lg border border-border/80 bg-card shadow-sm">
       <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/80 px-3 text-sm">
         <p className="inline-flex items-center gap-2 font-medium text-foreground">
           <FileCode2 className="size-4 text-muted-foreground" />
@@ -454,24 +457,32 @@ export function EditorMainPanel() {
             {editorDiffMode ? <PenLine className="size-4" /> : <Columns2 className="size-4" />}
           </Button>
           {showDiffDisplayControls ? (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 rounded-md border border-border/80 bg-background/70 p-0.5">
               <Button
-                size="xs"
-                variant={diffViewMode === "unified" ? "secondary" : "ghost"}
-                className="rounded-sm"
+                size="sm"
+                variant="ghost"
+                className={cn(
+                  "h-6 w-6 rounded-sm p-0 text-muted-foreground",
+                  diffViewMode === "unified" && "bg-secondary text-foreground",
+                )}
                 onClick={() => updateSettings({ patch: { diffViewMode: "unified" } })}
                 title="Unified Diff"
+                aria-label="Unified Diff"
               >
-                Unified
+                <AlignJustify className="size-3.5" />
               </Button>
               <Button
-                size="xs"
-                variant={diffViewMode === "split" ? "secondary" : "ghost"}
-                className="rounded-sm"
+                size="sm"
+                variant="ghost"
+                className={cn(
+                  "h-6 w-6 rounded-sm p-0 text-muted-foreground",
+                  diffViewMode === "split" && "bg-secondary text-foreground",
+                )}
                 onClick={() => updateSettings({ patch: { diffViewMode: "split" } })}
                 title="Split Diff"
+                aria-label="Split Diff"
               >
-                Split
+                <Columns2 className="size-3.5" />
               </Button>
             </div>
           ) : null}
@@ -497,9 +508,9 @@ export function EditorMainPanel() {
         </div>
       </div>
 
-      <div className="mx-2 mb-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-sm border border-border/80 bg-editor text-editor-foreground shadow-sm">
+      <div className="mx-2 mb-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-sm border border-border/80 bg-editor text-editor-foreground shadow-sm">
         {editorTabs.length > 0 && <div
-          className="tab-strip-scroll flex items-end gap-0.5 overflow-x-auto border-b border-border/80 bg-transparent pt-px"
+          className="tab-strip-scroll min-w-0 w-full max-w-full flex items-end gap-0.5 overflow-x-auto border-b border-border/80 bg-transparent pt-px"
           onWheel={(event) => {
             if (event.deltaY !== 0) {
               event.currentTarget.scrollLeft += event.deltaY;
@@ -646,13 +657,22 @@ export function EditorMainPanel() {
               </div>
             ) : editorDiffMode && activeTab.originalContent ? (
               <DiffEditor
+                key={activeDiffSessionKey ?? "diff-editor"}
                 height="100%"
                 language={activeTab.language}
                 original={activeTab.originalContent}
                 modified={activeTab.content}
                 beforeMount={configureMonaco}
-                originalModelPath={`${activeModelPath ?? "file:///unknown"}?original`}
-                modifiedModelPath={`${activeModelPath ?? "file:///unknown"}?modified`}
+                originalModelPath={buildDiffEditorModelPath({
+                  filePath: activeTab.filePath,
+                  tabId: activeTab.id,
+                  side: "original",
+                })}
+                modifiedModelPath={buildDiffEditorModelPath({
+                  filePath: activeTab.filePath,
+                  tabId: activeTab.id,
+                  side: "modified",
+                })}
                 theme={monacoTheme}
                 options={{
                   readOnly: false,
@@ -668,8 +688,12 @@ export function EditorMainPanel() {
                   editor.getOriginalEditor().updateOptions({ tabSize: editorTabSize });
                   editor.getModifiedEditor().updateOptions({ tabSize: editorTabSize });
                   editor.getModifiedEditor().onDidChangeModelContent(() => {
+                    const activeDiffTabId = activeDiffTabIdRef.current;
+                    if (!activeDiffTabId) {
+                      return;
+                    }
                     const value = editor.getModifiedEditor().getValue();
-                    updateEditorContent({ tabId: activeTab.id, content: value });
+                    updateEditorContent({ tabId: activeDiffTabId, content: value });
                   });
                 }}
               />

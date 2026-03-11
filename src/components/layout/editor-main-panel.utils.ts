@@ -23,3 +23,16 @@ export function releaseDiffEditorModels(editor: DiffEditorModelOwner | null) {
   model.modified?.dispose();
   return true;
 }
+
+export function buildDiffEditorModelPath(args: {
+  filePath: string;
+  tabId: string;
+  side: "original" | "modified";
+}) {
+  const normalized = args.filePath.replaceAll("\\", "/").replace(/^\/+/, "");
+  const query = new URLSearchParams({
+    diffTab: args.tabId,
+    side: args.side,
+  });
+  return `file:///${normalized}?${query.toString()}`;
+}

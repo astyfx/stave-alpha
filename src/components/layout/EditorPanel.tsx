@@ -13,9 +13,10 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Button, Input, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
+import { parseUnifiedDiffToBuffers } from "@/lib/source-control-diff";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
 import { buildExplorerIndex, collectAncestorFolders, normalizeRelativeInputPath, type ExplorerNode } from "./editor-panel.utils";
@@ -29,33 +30,6 @@ interface SourceControlHistoryItem {
   hash: string;
   relativeDate: string;
   subject: string;
-}
-
-function parseUnifiedDiff(args: { patch: string }) {
-  const oldLines: string[] = [];
-  const newLines: string[] = [];
-
-  for (const line of args.patch.split("\n")) {
-    if (line.startsWith("@@") || line.startsWith("diff --git") || line.startsWith("index ") || line.startsWith("---") || line.startsWith("+++")) {
-      continue;
-    }
-    if (line.startsWith("+")) {
-      newLines.push(line.slice(1));
-      continue;
-    }
-    if (line.startsWith("-")) {
-      oldLines.push(line.slice(1));
-      continue;
-    }
-    const context = line.startsWith(" ") ? line.slice(1) : line;
-    oldLines.push(context);
-    newLines.push(context);
-  }
-
-  return {
-    oldContent: oldLines.join("\n"),
-    newContent: newLines.join("\n"),
-  };
 }
 
 function ExplorerTreeRow(args: {
@@ -141,8 +115,7 @@ export function EditorPanel() {
   const [sourceError, setSourceError] = useState("");
   const [hasConflicts, setHasConflicts] = useState(false);
   const [isScmBusy, setIsScmBusy] = useState(false);
-  const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null);
-  const [selectedDiffContent, setSelectedDiffContent] = useState("");
+  const selectedDiffRequestIdRef = useRef(0);
 
   const explorerIndex = useMemo(() => buildExplorerIndex({ files: projectFiles }), [projectFiles]);
   const explorerTree = explorerIndex.tree;
@@ -265,15 +238,23 @@ export function EditorPanel() {
 
   async function handleSelectDiff(args: { path: string }) {
     const getDiff = window.api?.sourceControl?.getDiff;
-    setSelectedDiffPath(args.path);
+    const requestId = selectedDiffRequestIdRef.current + 1;
+    selectedDiffRequestIdRef.current = requestId;
     if (!getDiff) {
       setSourceError("Source Control bridge unavailable.");
       return;
     }
 
     const result = await getDiff({ path: args.path, cwd: workspaceCwd });
-    setSelectedDiffContent(result.content);
-    const parsed = parseUnifiedDiff({ patch: result.content });
+    if (selectedDiffRequestIdRef.current !== requestId) {
+      return;
+    }
+    const parsed = result.oldContent != null && result.newContent != null
+      ? {
+          oldContent: result.oldContent,
+          newContent: result.newContent,
+        }
+      : parseUnifiedDiffToBuffers({ patch: result.content });
     openDiffInEditor({
       editorTabId: `scm-diff:${args.path}`,
       filePath: args.path,
@@ -369,9 +350,9 @@ export function EditorPanel() {
   return (
     <aside
       data-testid="editor-panel"
-      className="h-full w-full overflow-hidden"
+      className="h-full min-w-0 w-full overflow-hidden"
     >
-      <div className="flex h-full min-h-0 flex-col rounded-lg shadow-sm border border-border/80 bg-card">
+      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border/80 bg-card shadow-sm">
         <div className="flex h-10 items-center justify-between border-b border-border/80 px-3">
           <TooltipProvider>
             <div className="flex items-center gap-1.5">
@@ -582,13 +563,6 @@ export function EditorPanel() {
                     </div>
                   </div>
                 ))}
-              </div>
-
-              <div className="mt-2 rounded-sm border border-border/80 bg-card p-2">
-                <p className="mb-1 text-sm text-muted-foreground">Diff Preview {selectedDiffPath ? `(${selectedDiffPath})` : ""}</p>
-                <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded-sm border border-border/70 bg-background p-2 text-xs text-foreground">
-                  {selectedDiffContent || "Select a changed file to preview diff."}
-                </pre>
               </div>
             </>
           )}

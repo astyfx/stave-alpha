@@ -180,7 +180,13 @@ interface WindowSourceControlApi {
   stageFile?: (args: { path: string; cwd?: string }) => Promise<SourceControlCommandResult>;
   unstageFile?: (args: { path: string; cwd?: string }) => Promise<SourceControlCommandResult>;
   discardFile?: (args: { path: string; cwd?: string }) => Promise<SourceControlCommandResult>;
-  getDiff?: (args: { path: string; cwd?: string }) => Promise<{ ok: boolean; content: string; stderr: string }>;
+  getDiff?: (args: { path: string; cwd?: string }) => Promise<{
+    ok: boolean;
+    content: string;
+    oldContent?: string;
+    newContent?: string;
+    stderr: string;
+  }>;
   getHistory?: (args: { cwd?: string; limit?: number }) => Promise<{
     ok: boolean;
     items: Array<{ hash: string; relativeDate: string; subject: string }>;

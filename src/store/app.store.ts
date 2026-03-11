@@ -58,6 +58,8 @@ interface LayoutState {
 }
 
 const APP_STORE_KEY = "stave-store";
+export const MIN_EDITOR_PANEL_WIDTH = 600;
+export const DEFAULT_EDITOR_PANEL_WIDTH = 720;
 export const PROVIDER_TIMEOUT_OPTIONS = [600000, 1200000, 1800000] as const;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 1800000;
 
@@ -372,7 +374,7 @@ function incrementWorkspaceSnapshotVersion(state: Pick<AppState, "workspaceSnaps
 
 function mergeLayoutPatch(args: { layout: LayoutState; patch: Partial<LayoutState> }) {
   let changed = false;
-  const nextLayout: LayoutState = { ...args.layout };
+  const nextLayout: LayoutState = normalizeLayoutState({ ...args.layout });
 
   for (const [rawKey, rawValue] of Object.entries(args.patch)) {
     const key = rawKey as keyof LayoutState;
@@ -384,7 +386,15 @@ function mergeLayoutPatch(args: { layout: LayoutState; patch: Partial<LayoutStat
     changed = true;
   }
 
-  return changed ? nextLayout : null;
+  const normalizedLayout = normalizeLayoutState(nextLayout);
+  return changed ? normalizedLayout : null;
+}
+
+function normalizeLayoutState(layout: LayoutState): LayoutState {
+  return {
+    ...layout,
+    editorPanelWidth: Math.max(MIN_EDITOR_PANEL_WIDTH, layout.editorPanelWidth),
+  };
 }
 
 function areStringArraysEqual(left: string[], right: string[]) {
@@ -733,7 +743,7 @@ export const useAppStore = create<AppState>()(
       layout: {
         taskListWidth: 185,
         taskListCollapsed: false,
-        editorPanelWidth: 520,
+        editorPanelWidth: DEFAULT_EDITOR_PANEL_WIDTH,
         explorerPanelWidth: 300,
         terminalDockHeight: 210,
         editorVisible: false,
@@ -2243,8 +2253,35 @@ export const useAppStore = create<AppState>()(
       openDiffInEditor: ({ editorTabId, filePath, oldContent, newContent }) => {
         set((state) => {
           const existing = state.editorTabs.find((tab) => tab.id === editorTabId);
+          const nextLanguage = resolveLanguage({ filePath });
           if (existing) {
+            const canRefreshExisting = !existing.isDirty;
+            const shouldRefreshExisting = canRefreshExisting
+              && (
+                existing.filePath !== filePath
+                || existing.language !== nextLanguage
+                || existing.originalContent !== oldContent
+                || existing.content !== newContent
+                || existing.savedContent !== newContent
+              );
+
             return {
+              editorTabs: shouldRefreshExisting
+                ? state.editorTabs.map((tab) =>
+                    tab.id === existing.id
+                      ? {
+                          ...tab,
+                          filePath,
+                          language: nextLanguage,
+                          content: newContent,
+                          originalContent: oldContent,
+                          savedContent: newContent,
+                          hasConflict: false,
+                          isDirty: false,
+                        }
+                      : tab
+                  )
+                : state.editorTabs,
               activeEditorTabId: existing.id,
               layout: { ...state.layout, editorVisible: true, editorDiffMode: true },
             };
@@ -2254,7 +2291,7 @@ export const useAppStore = create<AppState>()(
             id: editorTabId,
             filePath,
             kind: "text",
-            language: resolveLanguage({ filePath }),
+            language: nextLanguage,
             content: newContent,
             originalContent: oldContent,
             savedContent: newContent,
@@ -2598,6 +2635,7 @@ export const useAppStore = create<AppState>()(
         state.settings.providerTimeoutMs = normalizeProviderTimeoutMs({
           value: state.settings.providerTimeoutMs,
         });
+        state.layout = normalizeLayoutState(state.layout);
         const isDark = resolveDarkModeForTheme({
           themeMode: state.settings?.themeMode ?? "dark",
           fallback: state.isDarkMode,

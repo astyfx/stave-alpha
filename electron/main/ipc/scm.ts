@@ -1,6 +1,35 @@
 import { ipcMain } from "electron";
+import { promises as fs } from "node:fs";
 import { parseWorktreePathByBranch } from "../../../src/lib/source-control-worktrees";
-import { hasConflictItems, parseStatusLines, quotePath, runCommand } from "../utils/command";
+import { buildSourceControlDiffPreview, resolveSourceControlDiffPaths } from "../../../src/lib/source-control-diff";
+import { hasConflictItems, parseStatusLines, quotePath, resolveCommandCwd, runCommand } from "../utils/command";
+import { resolveRootFilePath } from "../utils/filesystem";
+
+function toGitPathspecArg(paths: string[]) {
+  return paths.map((filePath) => `"${quotePath({ value: filePath })}"`).join(" ");
+}
+
+async function readGitHeadFile(args: { cwd?: string; filePath: string }) {
+  const result = await runCommand({
+    command: `git show HEAD:"${quotePath({ value: args.filePath })}"`,
+    cwd: args.cwd,
+  });
+  return result.ok ? result.stdout : "";
+}
+
+async function readWorkingTreeFile(args: { cwd?: string; filePath: string }) {
+  const cwd = resolveCommandCwd({ cwd: args.cwd });
+  const absolutePath = resolveRootFilePath({ rootPath: cwd, filePath: args.filePath });
+  if (!absolutePath) {
+    return "";
+  }
+
+  try {
+    return await fs.readFile(absolutePath, "utf8");
+  } catch {
+    return "";
+  }
+}
 
 export function registerScmHandlers() {
   ipcMain.handle("scm:status", async (_event, args: { cwd?: string }) => {
@@ -39,19 +68,24 @@ export function registerScmHandlers() {
   });
 
   ipcMain.handle("scm:diff", async (_event, args: { path: string; cwd?: string }) => {
-    const safePath = quotePath({ value: args.path });
-    const unstaged = await runCommand({ command: `git diff -- "${safePath}"`, cwd: args.cwd });
-    const staged = await runCommand({ command: `git diff --cached -- "${safePath}"`, cwd: args.cwd });
-    const content = [
-      staged.stdout ? `# Staged\n${staged.stdout}` : "",
-      unstaged.stdout ? `# Unstaged\n${unstaged.stdout}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const paths = resolveSourceControlDiffPaths({ rawPath: args.path });
+    const pathspecArg = toGitPathspecArg(paths.pathspecs);
+    const [staged, unstaged, oldContent, newContent] = await Promise.all([
+      runCommand({ command: `git diff --cached -- ${pathspecArg}`, cwd: args.cwd }),
+      runCommand({ command: `git diff -- ${pathspecArg}`, cwd: args.cwd }),
+      readGitHeadFile({ cwd: args.cwd, filePath: paths.headPath }),
+      readWorkingTreeFile({ cwd: args.cwd, filePath: paths.workingTreePath }),
+    ]);
+    const content = buildSourceControlDiffPreview({
+      stagedPatch: staged.stdout,
+      unstagedPatch: unstaged.stdout,
+    });
 
     return {
       ok: unstaged.ok || staged.ok,
-      content: content || "No diff output.",
+      content,
+      oldContent,
+      newContent,
       stderr: [staged.stderr, unstaged.stderr].filter(Boolean).join("\n").trim(),
     };
   });
