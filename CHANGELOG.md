@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.8](https://github.com/astyfx/stave/compare/v0.0.7...v0.0.8) (2026-03-11)
+
+### Bug Fixes
+
+* stabilize diff editor panels and controls ([ae0294b](https://github.com/astyfx/stave/commit/ae0294b4ef7740bccd6a9f111c1212b74f948d0c))
+
+### Performance Improvements
+
+* narrow layout state subscriptions ([4f22dcf](https://github.com/astyfx/stave/commit/4f22dcf3f4406b865ed28dcf80933b7d4f241d61))
+* optimize terminal dock updates ([4dc6fda](https://github.com/astyfx/stave/commit/4dc6fda7803fe5003c61b730e269740640d92226))
+
+### Highlights
+
+- stabilized SCM diff tabs so repeated opens and tab switches keep added/removed markers aligned with the real before/after workspace content
+- simplified source-control review by removing the redundant inline diff preview, keeping diff controls in the editor, and preserving healthier panel sizing and tab scrolling behavior
+- reduced terminal dock overhead by batching output writes, transcript persistence, resize handling, and session polling work
+- narrowed Zustand subscriptions across the app shell, top bar, task list, and session surfaces by extracting memoized layout components and moving list-local state down to the components that use it
+
 ## [0.0.7](https://github.com/astyfx/stave/compare/v0.0.6...v0.0.7) (2026-03-11)
 
 ### Features
