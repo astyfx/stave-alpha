@@ -12,7 +12,7 @@ Stave is an Electron-based AI coding workspace built with Bun, React, Vite, and 
 - SQLite-backed local persistence for workspaces, tasks, messages, turns, and request snapshots
 - Canonical conversation requests translated into provider-specific runtime prompts
 - Unified provider event pipeline for text, thinking, tools, approvals, user input, Claude plans, and diffs
-- Latest-turn diagnostics with provider session ids, event timeline, and request snapshot inspection
+- Session Replay drawer with recent-turn overview, replay filters, provider session ids, and request snapshot inspection
 - Unit and Playwright E2E coverage
 
 ## Stack
@@ -96,6 +96,15 @@ location.reload();
 
 When enabled, slow commits are logged to the console and recorded as `performance.measure(...)` entries prefixed with `stave:render:`.
 
+## Developer diagnostics
+
+The Settings dialog now includes desktop-only developer diagnostics for renderer performance and GPU/compositor state:
+
+- `Session Replay UI` toggles the replay entry point for the active task chat
+- `GPU Acceleration` shows Electron-reported hardware acceleration and GPU feature status, which is useful when debugging WSL2 and filtered-transparency issues
+
+The GPU status card is available only when the Electron preload bridge exposes `window.api.window.getGpuStatus()`.
+
 ## Desktop packaging
 
 If you want to test a real desktop build without hot reload, rebuild the native Electron modules first:
@@ -172,7 +181,7 @@ High-level flow:
 
 This keeps the task thread as Stave's source of truth while still letting each provider preserve its own native conversation id when available.
 
-## Turn diagnostics and persistence
+## Session replay and persistence
 
 Every persisted turn stores:
 
@@ -181,7 +190,7 @@ Every persisted turn stores:
 - provider-native conversation ids
 - a `request_snapshot` payload containing the canonical request used to start that turn
 
-The diagnostics panel can therefore show not only what a provider emitted, but also what Stave actually sent into that turn.
+The Session Replay drawer can therefore show not only what a provider emitted, but also what Stave actually sent into that turn. Generic background tool activity is intended to be inspected there instead of expanding the main chat transcript.
 
 ## How Claude SDK works in Stave
 
@@ -324,6 +333,9 @@ Most per-turn runtime settings can also be changed from the Settings dialog, and
 
 - Current stored style: `radix-vega`
 - Last recorded preset reference: `aIkf1Td`
+- Current menu treatment: `default-translucent` with `subtle` accents
+- Tailwind class prefix: empty string
+- Generated alias set includes `@/hooks`
 
 ```bash
 bunx --bun shadcn@latest init --preset aIkf1Td

@@ -373,6 +373,10 @@ interface WindowApi {
     toggleMaximize?: () => Promise<{ isMaximized: boolean }>;
     close?: () => Promise<void>;
     isMaximized?: () => Promise<{ isMaximized: boolean }>;
+    getGpuStatus?: () => Promise<{
+      hardwareAccelerationEnabled: boolean;
+      featureStatus: Record<string, string>;
+    }>;
     subscribeZoomChanges?: (listener: (payload: { factor: number; percent: number }) => void) => () => void;
   };
   shell?: {

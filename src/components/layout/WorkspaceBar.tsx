@@ -295,14 +295,14 @@ export function WorkspaceBar() {
               </Tooltip>
               <DropdownMenuContent align="start" sideOffset={8} className="h-[50vh] w-[min(26rem,calc(100vw-2rem))] overflow-y-auto p-2">
                 <Input
-                  className="h-9 rounded-md border-background/12 bg-background/8 text-sm text-background placeholder:text-background/45"
+                  className="h-9 rounded-md text-sm"
                   placeholder="Search branches"
                   value={branchFilter}
                   onChange={(event) => setBranchFilter(event.target.value)}
                 />
                 <div className="mt-2 flex gap-2">
                   <Input
-                    className="h-9 rounded-md border-background/12 bg-background/8 text-sm text-background placeholder:text-background/45"
+                    className="h-9 rounded-md text-sm"
                     placeholder="new-branch-name"
                     value={newBranchName}
                     onChange={(event) => setNewBranchName(event.target.value)}
@@ -331,8 +331,8 @@ export function WorkspaceBar() {
                         type="button"
                         className={cn(
                           "w-full rounded-sm px-2 py-2 text-left transition-colors",
-                          isCurrent && "border border-background/12 bg-background/10",
-                          !isCurrent && "hover:bg-background/10",
+                          isCurrent && "border border-border bg-accent",
+                          !isCurrent && "hover:bg-accent/60",
                           (isBusy || isCurrent) && "cursor-not-allowed opacity-60",
                         )}
                         onClick={() => {
@@ -347,12 +347,12 @@ export function WorkspaceBar() {
                         disabled={isBusy || isCurrent}
                         title={statusLabel}
                       >
-                        <p className="font-medium text-background">{branch}</p>
-                        <p className="text-sm text-background/60">{statusLabel}</p>
+                        <p className="font-medium">{branch}</p>
+                        <p className="text-sm text-muted-foreground">{statusLabel}</p>
                       </button>
                     );
                   })}
-                  {!branchError && filteredBranches.length === 0 ? <p className="px-2 py-2 text-background/60">No available branches.</p> : null}
+                  {!branchError && filteredBranches.length === 0 ? <p className="px-2 py-2 text-muted-foreground">No available branches.</p> : null}
                 </div>
               </DropdownMenuContent>
             </DropdownMenu>

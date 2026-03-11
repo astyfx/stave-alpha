@@ -74,6 +74,11 @@ function formatProviderTimeoutLabel(value: number) {
   return `${minutes} min`;
 }
 
+interface GpuStatusSnapshot {
+  hardwareAccelerationEnabled: boolean;
+  featureStatus: Record<string, string>;
+}
+
 function SectionHeading(args: { title: string; description: string }) {
   return (
     <div className="mb-4">
@@ -1193,7 +1198,43 @@ function DeveloperSection() {
   const [codexPathOverride, providerDebugStream, turnDiagnosticsVisible] = useAppStore(
     useShallow((state) => [state.settings.codexPathOverride, state.settings.providerDebugStream, state.settings.turnDiagnosticsVisible] as const),
   );
+  const [gpuStatus, setGpuStatus] = useState<GpuStatusSnapshot | null>(null);
+  const [gpuStatusError, setGpuStatusError] = useState("");
   const updateSettings = useAppStore((state) => state.updateSettings);
+  const gpuStatusRows = gpuStatus ? Object.entries(gpuStatus.featureStatus).sort(([left], [right]) => left.localeCompare(right)) : [];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadGpuStatus() {
+      const getGpuStatus = window.api?.window?.getGpuStatus;
+      if (!getGpuStatus) {
+        if (!cancelled) {
+          setGpuStatusError("GPU status API unavailable.");
+        }
+        return;
+      }
+
+      try {
+        const nextStatus = await getGpuStatus();
+        if (cancelled) {
+          return;
+        }
+        setGpuStatus(nextStatus);
+        setGpuStatusError("");
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setGpuStatusError(error instanceof Error ? error.message : "Failed to load GPU status.");
+      }
+    }
+
+    void loadGpuStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <>
@@ -1230,6 +1271,37 @@ function DeveloperSection() {
               { value: "off", label: "Off" },
             ]}
           />
+        </SettingsCard>
+
+        <SettingsCard
+          title="GPU Acceleration"
+          description="Electron-reported compositor status for diagnosing WSL2 and filtered transparency performance."
+        >
+          {gpuStatus ? (
+            <div className="space-y-2 rounded-md border border-border/80 bg-background px-3 py-2">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-medium text-foreground">Hardware acceleration</span>
+                <span className="font-mono text-muted-foreground">
+                  {gpuStatus.hardwareAccelerationEnabled ? "enabled" : "disabled"}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {gpuStatusRows.map(([key, value]) => (
+                  <div key={key} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-muted-foreground">{key}</span>
+                    <span className="font-mono text-foreground">{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : gpuStatusError ? null : (
+            <p className="text-sm text-muted-foreground">Loading GPU status…</p>
+          )}
+          {gpuStatusError ? (
+            <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-muted-foreground">
+              {gpuStatusError}
+            </p>
+          ) : null}
         </SettingsCard>
 
         <SettingsCard

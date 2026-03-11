@@ -238,14 +238,14 @@ export function TopBar() {
                   setProjectMenuOpen(false);
                 }}
               >
-                <FolderPlus className="size-4 text-background/60" />
+                <FolderPlus className="size-4 text-muted-foreground" />
                 Create project (select folder)
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Current Project</DropdownMenuLabel>
-              <div className="rounded-sm border border-background/12 bg-background/8 px-2 py-2">
-                <p className="truncate text-sm font-medium text-background">{workspaceRootName ?? "No Project"}</p>
-                <p className="truncate text-sm text-background/60">{workspaceBranchById[activeWorkspaceId] ?? "main"}</p>
+              <div className="rounded-sm border border-border bg-muted/30 px-2 py-2">
+                <p className="truncate text-sm font-medium">{workspaceRootName ?? "No Project"}</p>
+                <p className="truncate text-sm text-muted-foreground">{workspaceBranchById[activeWorkspaceId] ?? "main"}</p>
               </div>
             </DropdownMenuContent>
           </DropdownMenu>

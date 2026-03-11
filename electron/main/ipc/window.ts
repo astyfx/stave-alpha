@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 
 export function registerWindowHandlers() {
   ipcMain.handle("window:minimize", (event) => {
@@ -26,4 +26,9 @@ export function registerWindowHandlers() {
     const window = BrowserWindow.fromWebContents(event.sender);
     return { isMaximized: window?.isMaximized() ?? false };
   });
+
+  ipcMain.handle("window:get-gpu-status", () => ({
+    hardwareAccelerationEnabled: app.isHardwareAccelerationEnabled(),
+    featureStatus: app.getGPUFeatureStatus(),
+  }));
 }

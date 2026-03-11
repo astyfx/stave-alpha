@@ -170,6 +170,10 @@ contextBridge.exposeInMainWorld("api", {
     toggleMaximize: () => ipcRenderer.invoke("window:toggle-maximize"),
     close: () => ipcRenderer.invoke("window:close"),
     isMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+    getGpuStatus: () => ipcRenderer.invoke("window:get-gpu-status") as Promise<{
+      hardwareAccelerationEnabled: boolean;
+      featureStatus: Record<string, string>;
+    }>,
     subscribeZoomChanges: (listener: (payload: { factor: number; percent: number }) => void) => {
       zoomChangeSubscribers.add(listener);
       return () => {
