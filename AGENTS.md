@@ -27,3 +27,9 @@ For version bumps, release commits, changelog generation, tags, or pushes to the
 When using an existing shadcn component, prefer generating it with `bunx --bun shadcn@latest add <component>` instead of hand-writing or directly vendoring the wrapper first.
 
 After generating shadcn components or copying UI code from external sources, verify that import paths match this project's configured aliases before finishing. In this repo, `tsconfig.json` resolves `@/*` to `src/*`, so generated `src/...` imports should be rewritten to `@/...`. More generally, do not assume copied code uses this repo's path layout; reconcile imports with the current `tsconfig` and `components.json` settings.
+
+## Documentation Maintenance
+
+When behavior, architecture, UX, settings, or release-facing details change, review `README.md` and the relevant files under `docs/` before finishing.
+
+If a code change or commit would leave `README.md` or `docs/` stale, update the documentation in the same piece of work.

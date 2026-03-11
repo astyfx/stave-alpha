@@ -262,7 +262,7 @@ function ThemeSection() {
 
         <SettingsCard
           title="Design Tokens"
-          description="Defaults follow `bunx --bun shadcn@latest init --preset aIkf1Td`. Override any token below."
+          description="Defaults follow `bunx --bun shadcn@latest init --preset aIkf1TW`. Override any token below."
         >
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/70 bg-muted/30 p-3">
             <div className="flex items-center gap-2">
