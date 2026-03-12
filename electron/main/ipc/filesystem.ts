@@ -4,6 +4,8 @@ import path from "node:path";
 import { OpenExternalArgsSchema } from "./schemas";
 import { openExternalWithFallback } from "../utils/external-url";
 import { listFilesRecursive, mimeTypeFromFilePath, resolveRootFilePath, revisionFromStat } from "../utils/filesystem";
+import { readWorkspaceSourceFiles } from "./filesystem-source-files";
+import { readWorkspaceTypeDefinitionFiles } from "./filesystem-type-libs";
 
 export function registerFilesystemHandlers() {
   ipcMain.handle("fs:pick-root", async () => {
@@ -103,123 +105,17 @@ export function registerFilesystemHandlers() {
   });
 
   ipcMain.handle("fs:read-type-defs", async (_event, args: { rootPath: string }) => {
-    const libs: Array<{ content: string; filePath: string }> = [];
-    const MAX_TOTAL = 400;
-    const MAX_DEPTH = 3;
-
-    async function collectDts(dir: string, virtualBase: string, depth: number): Promise<void> {
-      if (depth > MAX_DEPTH || libs.length >= MAX_TOTAL) {
-        return;
-      }
-      let entries;
-      try {
-        entries = await fs.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (libs.length >= MAX_TOTAL) {
-          break;
-        }
-        if (entry.isFile() && entry.name.endsWith(".d.ts")) {
-          try {
-            const content = await fs.readFile(path.join(dir, entry.name), "utf-8");
-            libs.push({ content, filePath: `${virtualBase}/${entry.name}` });
-          } catch {
-            // Skip unreadable files.
-          }
-        } else if (entry.isDirectory() && entry.name !== "node_modules") {
-          await collectDts(path.join(dir, entry.name), `${virtualBase}/${entry.name}`, depth + 1);
-        }
-      }
-    }
-
     try {
-      const pkgJsonRaw = await fs.readFile(path.join(args.rootPath, "package.json"), "utf-8");
-      const pkgJson = JSON.parse(pkgJsonRaw) as {
-        dependencies?: Record<string, string>;
-        devDependencies?: Record<string, string>;
-      };
-      const deps = Object.keys({ ...(pkgJson.dependencies ?? {}), ...(pkgJson.devDependencies ?? {}) });
-
-      for (const dep of deps) {
-        if (libs.length >= MAX_TOTAL) {
-          break;
-        }
-
-        if (!dep.startsWith("@")) {
-          await collectDts(
-            path.join(args.rootPath, "node_modules", "@types", dep),
-            `file:///node_modules/@types/${dep}`,
-            0,
-          );
-        }
-
-        const depDir = path.join(args.rootPath, "node_modules", dep);
-        let typesEntry: string | undefined;
-        try {
-          const depPkg = JSON.parse(await fs.readFile(path.join(depDir, "package.json"), "utf-8")) as {
-            types?: string;
-            typings?: string;
-          };
-          typesEntry = depPkg.types ?? depPkg.typings;
-        } catch {
-          // Ignore packages without package.json or types metadata.
-        }
-
-        if (typesEntry) {
-          const typesDir = path.dirname(path.join(depDir, typesEntry));
-          await collectDts(typesDir, `file:///node_modules/${dep}`, 0);
-        } else {
-          try {
-            const content = await fs.readFile(path.join(depDir, "index.d.ts"), "utf-8");
-            libs.push({ content, filePath: `file:///node_modules/${dep}/index.d.ts` });
-          } catch {
-            // Ignore packages without a root index.d.ts.
-          }
-        }
-      }
+      const libs = await readWorkspaceTypeDefinitionFiles({ rootPath: args.rootPath });
+      return { ok: true, libs };
     } catch (error) {
       return { ok: false, libs: [], stderr: String(error) };
     }
-
-    return { ok: true, libs };
   });
 
   ipcMain.handle("fs:read-source-files", async (_event, args: { rootPath: string }) => {
-    const files: Array<{ content: string; filePath: string }> = [];
-    const MAX_TOTAL = 800;
-    const EXCLUDED_DIRS = new Set(["node_modules", ".git", "dist", "out", "build", ".next", ".nuxt"]);
-
-    async function collectSrc(dir: string, virtualBase: string): Promise<void> {
-      if (files.length >= MAX_TOTAL) {
-        return;
-      }
-      let entries;
-      try {
-        entries = await fs.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        if (files.length >= MAX_TOTAL) {
-          break;
-        }
-        if (entry.isFile() && /\.(tsx?|d\.ts)$/.test(entry.name)) {
-          try {
-            const content = await fs.readFile(path.join(dir, entry.name), "utf-8");
-            files.push({ content, filePath: `${virtualBase}/${entry.name}` });
-          } catch {
-            // Skip unreadable files.
-          }
-        } else if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
-          await collectSrc(path.join(dir, entry.name), `${virtualBase}/${entry.name}`);
-        }
-      }
-    }
-
     try {
-      await collectSrc(args.rootPath, "file://");
+      const files = await readWorkspaceSourceFiles({ rootPath: args.rootPath });
       return { ok: true, files };
     } catch (error) {
       return { ok: false, files: [], stderr: String(error) };

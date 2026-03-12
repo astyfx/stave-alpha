@@ -191,6 +191,8 @@ export interface AppSettings {
   editorMinimap: boolean;
   editorLineNumbers: "on" | "off" | "relative";
   editorTabSize: number;
+  editorLspEnabled: boolean;
+  pythonLspCommand: string;
   diffViewMode: "unified" | "split";
   providerDebugStream: boolean;
   turnDiagnosticsVisible: boolean;
@@ -333,6 +335,8 @@ const defaultSettings: AppSettings = {
   editorMinimap: false,
   editorLineNumbers: "on" as const,
   editorTabSize: 2,
+  editorLspEnabled: false,
+  pythonLspCommand: "",
   diffViewMode: "unified",
   providerDebugStream: false,
   turnDiagnosticsVisible: true,

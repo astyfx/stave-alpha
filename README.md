@@ -7,7 +7,7 @@ Stave is an Electron-based AI coding workspace built with Bun, React, Vite, and 
 - desktop-first Claude and Codex workspace
 - task-oriented chat with approvals, user-input, tools, diffs, and plans
 - Session Replay drawer for recent-turn inspection and request snapshots
-- Monaco editor, docked terminal, and source-control actions
+- Monaco editor with workspace-backed TypeScript IntelliSense, optional Python LSP support, docked terminal, and source-control actions
 - SQLite-backed local persistence for workspaces, tasks, messages, and turns
 
 ## Stack
@@ -27,6 +27,7 @@ Stave is an Electron-based AI coding workspace built with Bun, React, Vite, and 
 - Node.js
 - a working `claude` CLI login if you want Claude support
 - a working `codex` CLI login if you want Codex support
+- `pyright-langserver` or `basedpyright-langserver` on your PATH if you want Python LSP support in the editor
 
 Typical auth commands:
 
@@ -96,6 +97,7 @@ Stable project documentation now lives under `docs/`.
 - [Conversation flow](docs/architecture/conversation-flow.md)
 - [Provider runtimes](docs/providers/provider-runtimes.md)
 - [Session Replay](docs/features/session-replay.md)
+- [Language intelligence](docs/features/language-intelligence.md)
 - [Developer diagnostics](docs/developer/diagnostics.md)
 - [shadcn preset](docs/ui/shadcn-preset.md)
 

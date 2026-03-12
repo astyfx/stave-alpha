@@ -1,5 +1,6 @@
 import { app } from "electron";
 import path from "node:path";
+import { disposeAllLspSessions } from "./lsp/session-manager";
 import { SqliteStore } from "../persistence/sqlite-store";
 import type { TerminalSession } from "./types";
 
@@ -37,5 +38,6 @@ export function ensurePersistenceReadySync() {
 }
 
 export function resetMainProcessState() {
+  void disposeAllLspSessions();
   sqliteStore = null;
 }

@@ -131,6 +131,95 @@ interface WindowFsApi {
   }>;
 }
 
+type LspLanguageId = "python";
+
+interface WindowLspApi {
+  syncDocument?: (args: {
+    rootPath: string;
+    languageId: LspLanguageId;
+    filePath: string;
+    documentLanguageId: string;
+    text: string;
+    version: number;
+    commandOverride?: string;
+  }) => Promise<{
+    ok: boolean;
+    detail?: string;
+    value?: unknown;
+  }>;
+  closeDocument?: (args: {
+    rootPath: string;
+    languageId: LspLanguageId;
+    filePath: string;
+  }) => Promise<{
+    ok: boolean;
+    detail?: string;
+    value?: unknown;
+  }>;
+  hover?: (args: {
+    rootPath: string;
+    languageId: LspLanguageId;
+    filePath: string;
+    line: number;
+    character: number;
+    commandOverride?: string;
+  }) => Promise<{
+    ok: boolean;
+    detail?: string;
+    value?: unknown;
+  }>;
+  completion?: (args: {
+    rootPath: string;
+    languageId: LspLanguageId;
+    filePath: string;
+    line: number;
+    character: number;
+    commandOverride?: string;
+  }) => Promise<{
+    ok: boolean;
+    detail?: string;
+    value?: unknown;
+  }>;
+  definition?: (args: {
+    rootPath: string;
+    languageId: LspLanguageId;
+    filePath: string;
+    line: number;
+    character: number;
+    commandOverride?: string;
+  }) => Promise<{
+    ok: boolean;
+    detail?: string;
+    value?: unknown;
+  }>;
+  stopSessions?: (args: { rootPath?: string }) => Promise<{ ok: boolean }>;
+  subscribeEvents?: (listener: (payload:
+    | {
+        type: "status";
+        rootPath: string;
+        languageId: LspLanguageId;
+        status?: "starting" | "ready" | "error" | "unavailable" | "stopped";
+        detail?: string;
+      }
+    | {
+        type: "diagnostics";
+        rootPath: string;
+        languageId: LspLanguageId;
+        filePath?: string;
+        diagnostics?: Array<{
+          severity?: number;
+          message: string;
+          source?: string;
+          code?: string;
+          range: {
+            start: { line: number; character: number };
+            end: { line: number; character: number };
+          };
+        }>;
+      }
+  ) => void) => () => void;
+}
+
 interface TerminalRunArgs {
   command: string;
   cwd?: string;
@@ -372,6 +461,7 @@ interface WindowApi {
   provider?: WindowProviderApi;
   persistence?: WindowPersistenceApi;
   fs?: WindowFsApi;
+  lsp?: WindowLspApi;
   terminal?: WindowTerminalApi;
   sourceControl?: WindowSourceControlApi;
   window?: {

@@ -83,6 +83,38 @@ ipcRenderer.on("window:zoom-changed", (_event, payload: { factor: number; percen
   }
 });
 
+type LspEventPayload =
+  | {
+      type: "status";
+      rootPath: string;
+      languageId: "python";
+      status?: "starting" | "ready" | "error" | "unavailable" | "stopped";
+      detail?: string;
+    }
+  | {
+      type: "diagnostics";
+      rootPath: string;
+      languageId: "python";
+      filePath?: string;
+      diagnostics?: Array<{
+        severity?: number;
+        message: string;
+        source?: string;
+        code?: string;
+        range: {
+          start: { line: number; character: number };
+          end: { line: number; character: number };
+        };
+      }>;
+    };
+
+const lspEventSubscribers = new Set<(payload: LspEventPayload) => void>();
+ipcRenderer.on("lsp:event", (_event, payload: LspEventPayload) => {
+  for (const subscriber of lspEventSubscribers) {
+    subscriber(payload);
+  }
+});
+
 contextBridge.exposeInMainWorld("api", {
   provider: {
     streamTurn: (args: StreamTurnArgs) => ipcRenderer.invoke("provider:stream-turn", args),
@@ -139,6 +171,53 @@ contextBridge.exposeInMainWorld("api", {
       ipcRenderer.invoke("fs:write-file", args),
     readTypeDefs: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-type-defs", args),
     readSourceFiles: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-source-files", args),
+  },
+  lsp: {
+    syncDocument: (args: {
+      rootPath: string;
+      languageId: "python";
+      filePath: string;
+      documentLanguageId: string;
+      text: string;
+      version: number;
+      commandOverride?: string;
+    }) => ipcRenderer.invoke("lsp:sync-document", args),
+    closeDocument: (args: {
+      rootPath: string;
+      languageId: "python";
+      filePath: string;
+    }) => ipcRenderer.invoke("lsp:close-document", args),
+    hover: (args: {
+      rootPath: string;
+      languageId: "python";
+      filePath: string;
+      line: number;
+      character: number;
+      commandOverride?: string;
+    }) => ipcRenderer.invoke("lsp:hover", args),
+    completion: (args: {
+      rootPath: string;
+      languageId: "python";
+      filePath: string;
+      line: number;
+      character: number;
+      commandOverride?: string;
+    }) => ipcRenderer.invoke("lsp:completion", args),
+    definition: (args: {
+      rootPath: string;
+      languageId: "python";
+      filePath: string;
+      line: number;
+      character: number;
+      commandOverride?: string;
+    }) => ipcRenderer.invoke("lsp:definition", args),
+    stopSessions: (args: { rootPath?: string }) => ipcRenderer.invoke("lsp:stop-sessions", args),
+    subscribeEvents: (listener: (payload: LspEventPayload) => void) => {
+      lspEventSubscribers.add(listener);
+      return () => {
+        lspEventSubscribers.delete(listener);
+      };
+    },
   },
   terminal: {
     runCommand: (args: TerminalRunArgs) => ipcRenderer.invoke("terminal:run-command", args),

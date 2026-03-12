@@ -1,4 +1,5 @@
 import MonacoEditor, { DiffEditor, type Monaco } from "@monaco-editor/react";
+import type { editor as MonacoEditorApi, IPosition, IRange } from "monaco-editor";
 import { AlignJustify, Columns2, FileCode2, PenLine, Save, Send, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -9,6 +10,15 @@ import { ConfirmDialog } from "@/components/layout/ConfirmDialog";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { buildDiffEditorModelPath, releaseDiffEditorModels, type DiffEditorModelOwner } from "./editor-main-panel.utils";
+import {
+  clearLanguageIntelligenceMarkers,
+  configureMonacoLanguageIntelligence,
+  resyncLanguageIntelligenceModels,
+  stopLanguageIntelligenceSessions,
+  type LanguageIntelligenceRuntime,
+  type LanguageIntelligenceSettings,
+} from "./editor-language-intelligence";
+import { loadWorkspaceTypeScriptCompilerOptions, type WorkspaceTypeScriptCompilerOptions } from "./editor-monaco-tsconfig";
 
 type MonacoDisposable = { dispose(): void };
 
@@ -18,13 +28,152 @@ interface WorkspaceMonacoSupportState {
   sourceFileDisposables: MonacoDisposable[];
   typeDefsLoaded: boolean;
   sourceFilesLoaded: boolean;
+  compilerOptionsLoaded: boolean;
+  bootstrapPromise?: Promise<void>;
   typeDefsPromise?: Promise<void>;
   sourceFilesPromise?: Promise<void>;
+  compilerOptionsPromise?: Promise<void>;
   cancelDeferredSourceLoad?: (() => void) | null;
+}
+
+interface PendingEditorNavigation {
+  filePath: string;
+  selection: IRange | null;
 }
 
 let monacoDefaultsConfigured = false;
 let activeWorkspaceMonacoSupport: WorkspaceMonacoSupportState | null = null;
+let activeTypeScriptBootstrapSequence = 0;
+
+function getMonacoEnumValue(args: {
+  enumValues: Record<string, number>;
+  key: string;
+  fallback: number;
+}) {
+  const value = args.enumValues[args.key];
+  return typeof value === "number" ? value : args.fallback;
+}
+
+function resolveMonacoSourceLanguage(filePath: string) {
+  const lower = filePath.toLowerCase();
+  if (/\.(tsx?|mts|cts)$/.test(lower) || lower.endsWith(".d.ts")) {
+    return "typescript";
+  }
+  if (/\.(jsx?|mjs|cjs)$/.test(lower)) {
+    return "javascript";
+  }
+  return undefined;
+}
+
+function toMonacoBaseUrl(baseUrl?: string) {
+  const normalized = (baseUrl ?? "").replaceAll("\\", "/").replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!normalized || normalized === ".") {
+    return "file:///";
+  }
+  return `file:///${normalized}`;
+}
+
+function mapTsOptionNameToMonacoEnumKey(value: string, fallbackKey: string) {
+  const normalized = value.trim().toLowerCase();
+  const mappings: Record<string, string> = {
+    classic: "Classic",
+    node: "NodeJs",
+    node10: "NodeJs",
+    node16: "Node16",
+    nodenext: "NodeNext",
+    bundler: "Bundler",
+    preserve: "Preserve",
+    react: "React",
+    "react-native": "ReactNative",
+    "react-jsx": "ReactJSX",
+    "react-jsxdev": "ReactJSXDev",
+    "react-jsx-dev": "ReactJSXDev",
+    commonjs: "CommonJS",
+    amd: "AMD",
+    umd: "UMD",
+    system: "System",
+    es2015: "ES2015",
+    es2016: "ES2016",
+    es2017: "ES2017",
+    es2018: "ES2018",
+    es2019: "ES2019",
+    es2020: "ES2020",
+    es2021: "ES2021",
+    es2022: "ES2022",
+    es2023: "ES2023",
+    esnext: "ESNext",
+  };
+  return mappings[normalized] ?? fallbackKey;
+}
+
+function resolveMonacoEnumValue(args: {
+  enumValues: Record<string, number>;
+  value?: string;
+  fallbackKey: string;
+  fallbackValue: number;
+}) {
+  if (!args.value) {
+    return getMonacoEnumValue({
+      enumValues: args.enumValues,
+      key: args.fallbackKey,
+      fallback: args.fallbackValue,
+    });
+  }
+  const key = mapTsOptionNameToMonacoEnumKey(args.value, args.fallbackKey);
+  return getMonacoEnumValue({
+    enumValues: args.enumValues,
+    key,
+    fallback: args.fallbackValue,
+  });
+}
+
+function isMonacoRange(value: IRange | IPosition): value is IRange {
+  return "endLineNumber" in value && "endColumn" in value;
+}
+
+function toMonacoSelection(selectionOrPosition?: IRange | IPosition) {
+  if (!selectionOrPosition) {
+    return null;
+  }
+  if (isMonacoRange(selectionOrPosition)) {
+    return selectionOrPosition;
+  }
+  return {
+    startLineNumber: selectionOrPosition.lineNumber,
+    startColumn: selectionOrPosition.column,
+    endLineNumber: selectionOrPosition.lineNumber,
+    endColumn: selectionOrPosition.column,
+  };
+}
+
+function syncMonacoModels(args: {
+  monaco: Monaco;
+  files: Array<{ content: string; filePath: string }>;
+}) {
+  const disposables: MonacoDisposable[] = [];
+  for (const file of args.files) {
+    const modelUri = args.monaco.Uri.parse(file.filePath);
+    const existingModel = args.monaco.editor.getModel(modelUri);
+    if (existingModel) {
+      continue;
+    }
+    const model = args.monaco.editor.createModel(
+      file.content,
+      resolveMonacoSourceLanguage(file.filePath),
+      modelUri,
+    );
+    disposables.push(model);
+  }
+  return disposables;
+}
+
+function toWorkspaceFilePath(resource: { scheme: string; path: string }) {
+  if (resource.scheme !== "file") {
+    return null;
+  }
+  const normalized = resource.path.replaceAll("\\", "/").replace(/^\/+/, "");
+  return normalized || null;
+}
 
 function disposeMonacoDisposables(disposables: MonacoDisposable[]) {
   for (const disposable of disposables) {
@@ -56,20 +205,10 @@ function getWorkspaceMonacoSupportState(rootPath: string) {
     sourceFileDisposables: [],
     typeDefsLoaded: false,
     sourceFilesLoaded: false,
+    compilerOptionsLoaded: false,
     cancelDeferredSourceLoad: null,
   };
   return activeWorkspaceMonacoSupport;
-}
-
-function scheduleDeferredWorkspaceLoad(callback: () => void) {
-  if (typeof window !== "undefined" && "requestIdleCallback" in window && "cancelIdleCallback" in window) {
-    const idleId = window.requestIdleCallback(() => {
-      callback();
-    }, { timeout: 500 });
-    return () => window.cancelIdleCallback(idleId);
-  }
-  const timeoutId = globalThis.setTimeout(callback, 180);
-  return () => globalThis.clearTimeout(timeoutId);
 }
 
 function addMonacoExtraLibs(args: {
@@ -84,43 +223,117 @@ function addMonacoExtraLibs(args: {
   return disposables;
 }
 
+function buildMonacoCompilerOptions(args: {
+  monaco: Monaco;
+  workspaceCompilerOptions?: WorkspaceTypeScriptCompilerOptions | null;
+}) {
+  const scriptTargetValues = args.monaco.languages.typescript.ScriptTarget as unknown as Record<string, number>;
+  const moduleKindValues = args.monaco.languages.typescript.ModuleKind as unknown as Record<string, number>;
+  const moduleResolutionValues = args.monaco.languages.typescript.ModuleResolutionKind as unknown as Record<string, number>;
+  const workspaceCompilerOptions = args.workspaceCompilerOptions;
+  return {
+    target: resolveMonacoEnumValue({
+      enumValues: scriptTargetValues,
+      value: workspaceCompilerOptions?.target,
+      fallbackKey: "ES2022",
+      fallbackValue: args.monaco.languages.typescript.ScriptTarget.ESNext,
+    }),
+    lib: workspaceCompilerOptions?.lib?.map((entry) => entry.toLowerCase()) ?? ["es2022", "dom", "dom.iterable"],
+    module: resolveMonacoEnumValue({
+      enumValues: moduleKindValues,
+      value: workspaceCompilerOptions?.module,
+      fallbackKey: "ESNext",
+      fallbackValue: args.monaco.languages.typescript.ModuleKind.ESNext,
+    }),
+    moduleResolution: resolveMonacoEnumValue({
+      enumValues: moduleResolutionValues,
+      value: workspaceCompilerOptions?.moduleResolution,
+      fallbackKey: "Bundler",
+      fallbackValue: args.monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+    }),
+    jsx: resolveMonacoEnumValue({
+      enumValues: args.monaco.languages.typescript.JsxEmit as unknown as Record<string, number>,
+      value: workspaceCompilerOptions?.jsx,
+      fallbackKey: "ReactJSX",
+      fallbackValue: args.monaco.languages.typescript.JsxEmit.ReactJSX,
+    }),
+    allowJs: workspaceCompilerOptions?.allowJs ?? true,
+    allowNonTsExtensions: true,
+    allowSyntheticDefaultImports: workspaceCompilerOptions?.allowSyntheticDefaultImports ?? true,
+    esModuleInterop: workspaceCompilerOptions?.esModuleInterop ?? true,
+    types: workspaceCompilerOptions?.types?.length ? workspaceCompilerOptions.types : ["node"],
+    resolveJsonModule: workspaceCompilerOptions?.resolveJsonModule ?? true,
+    resolvePackageJsonExports: true,
+    resolvePackageJsonImports: true,
+    strict: workspaceCompilerOptions?.strict ?? true,
+    noEmit: workspaceCompilerOptions?.noEmit ?? true,
+    skipLibCheck: workspaceCompilerOptions?.skipLibCheck ?? true,
+    baseUrl: toMonacoBaseUrl(workspaceCompilerOptions?.baseUrl),
+    paths: workspaceCompilerOptions?.paths,
+  };
+}
+
+function applyMonacoCompilerOptions(args: {
+  monaco: Monaco;
+  workspaceCompilerOptions?: WorkspaceTypeScriptCompilerOptions | null;
+}) {
+  const compilerOptions = buildMonacoCompilerOptions(args);
+  args.monaco.languages.typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
+  args.monaco.languages.typescript.javascriptDefaults.setCompilerOptions(compilerOptions);
+}
+
+function setMonacoTypeScriptSemanticDiagnosticsEnabled(args: {
+  monaco: Monaco;
+  enabled: boolean;
+}) {
+  const diagnosticsOptions = {
+    noSemanticValidation: !args.enabled,
+    noSyntaxValidation: false,
+    onlyVisible: true,
+  };
+  args.monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
+  args.monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
+}
+
 function configureMonacoDefaults(monaco: Monaco) {
   if (monacoDefaultsConfigured) {
     return;
   }
 
-  const compilerOptions = {
-    target: monaco.languages.typescript.ScriptTarget.ES2022,
-    module: monaco.languages.typescript.ModuleKind.ESNext,
-    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-    jsx: monaco.languages.typescript.JsxEmit.ReactJSX,
-    allowJs: true,
-    allowNonTsExtensions: true,
-    allowSyntheticDefaultImports: true,
-    esModuleInterop: true,
-    resolveJsonModule: true,
-    strict: true,
-    noEmit: true,
-    skipLibCheck: true,
-    baseUrl: ".",
-    paths: {
-      "@/*": ["src/*"],
-    },
-  };
-
-  const diagnosticsOptions = {
-    noSemanticValidation: false,
-    noSyntaxValidation: false,
-    onlyVisible: true,
-  };
-
-  monaco.languages.typescript.typescriptDefaults.setEagerModelSync(false);
-  monaco.languages.typescript.javascriptDefaults.setEagerModelSync(false);
-  monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(diagnosticsOptions);
-  monaco.languages.typescript.typescriptDefaults.setCompilerOptions(compilerOptions);
-  monaco.languages.typescript.javascriptDefaults.setCompilerOptions(compilerOptions);
+  monaco.languages.typescript.typescriptDefaults.setEagerModelSync(true);
+  monaco.languages.typescript.javascriptDefaults.setEagerModelSync(true);
+  setMonacoTypeScriptSemanticDiagnosticsEnabled({
+    monaco,
+    enabled: false,
+  });
+  applyMonacoCompilerOptions({ monaco, workspaceCompilerOptions: null });
   monacoDefaultsConfigured = true;
+}
+
+async function ensureWorkspaceCompilerOptionsLoaded(args: {
+  monaco: Monaco;
+  state: WorkspaceMonacoSupportState;
+}) {
+  if (args.state.compilerOptionsLoaded || args.state.compilerOptionsPromise) {
+    return args.state.compilerOptionsPromise;
+  }
+
+  args.state.compilerOptionsPromise = loadWorkspaceTypeScriptCompilerOptions(args.state.rootPath)
+    .then((workspaceCompilerOptions) => {
+      if (activeWorkspaceMonacoSupport !== args.state) {
+        return;
+      }
+      applyMonacoCompilerOptions({
+        monaco: args.monaco,
+        workspaceCompilerOptions,
+      });
+      args.state.compilerOptionsLoaded = true;
+    })
+    .finally(() => {
+      args.state.compilerOptionsPromise = undefined;
+    });
+
+  return args.state.compilerOptionsPromise;
 }
 
 async function ensureWorkspaceTypeDefsLoaded(args: {
@@ -183,7 +396,7 @@ async function ensureWorkspaceSourceFilesLoaded(args: {
         return;
       }
       disposeMonacoDisposables(args.state.sourceFileDisposables);
-      args.state.sourceFileDisposables = addMonacoExtraLibs({
+      args.state.sourceFileDisposables = syncMonacoModels({
         monaco: args.monaco,
         files: result.files,
       });
@@ -193,6 +406,43 @@ async function ensureWorkspaceSourceFilesLoaded(args: {
     });
 
   return args.state.sourceFilesPromise;
+}
+
+async function ensureWorkspaceTypeScriptBootstrapLoaded(args: {
+  monaco: Monaco;
+  state: WorkspaceMonacoSupportState;
+}) {
+  if (args.state.bootstrapPromise) {
+    return args.state.bootstrapPromise;
+  }
+
+  const bootstrapSequence = ++activeTypeScriptBootstrapSequence;
+  setMonacoTypeScriptSemanticDiagnosticsEnabled({
+    monaco: args.monaco,
+    enabled: false,
+  });
+
+  const bootstrapPromise: Promise<void> = Promise.all([
+    ensureWorkspaceCompilerOptionsLoaded(args),
+    ensureWorkspaceTypeDefsLoaded(args),
+    ensureWorkspaceSourceFilesLoaded(args),
+  ]).then(() => undefined).finally(() => {
+    if (args.state.bootstrapPromise === bootstrapPromise) {
+      args.state.bootstrapPromise = undefined;
+    }
+    if (
+      activeWorkspaceMonacoSupport === args.state
+      && activeTypeScriptBootstrapSequence === bootstrapSequence
+    ) {
+      setMonacoTypeScriptSemanticDiagnosticsEnabled({
+        monaco: args.monaco,
+        enabled: true,
+      });
+    }
+  });
+
+  args.state.bootstrapPromise = bootstrapPromise;
+  return bootstrapPromise;
 }
 
 function supportsWorkspaceTypeLibraries(language: string) {
@@ -205,6 +455,12 @@ function syncWorkspaceMonacoSupport(args: {
   shouldLoadWorkspaceSupport: boolean;
 }) {
   if (!args.monaco || !args.workspaceRootPath) {
+    if (args.monaco) {
+      setMonacoTypeScriptSemanticDiagnosticsEnabled({
+        monaco: args.monaco,
+        enabled: true,
+      });
+    }
     if (activeWorkspaceMonacoSupport) {
       disposeWorkspaceMonacoSupport(activeWorkspaceMonacoSupport);
     }
@@ -212,28 +468,43 @@ function syncWorkspaceMonacoSupport(args: {
   }
 
   const supportState = getWorkspaceMonacoSupportState(args.workspaceRootPath);
+  void ensureWorkspaceCompilerOptionsLoaded({
+    monaco: args.monaco,
+    state: supportState,
+  });
   void ensureWorkspaceTypeDefsLoaded({
     monaco: args.monaco,
     state: supportState,
   });
 
-  if (args.shouldLoadWorkspaceSupport && !supportState.sourceFilesLoaded && !supportState.sourceFilesPromise) {
-    if (!supportState.cancelDeferredSourceLoad) {
-      supportState.cancelDeferredSourceLoad = scheduleDeferredWorkspaceLoad(() => {
-        supportState.cancelDeferredSourceLoad = null;
-        void ensureWorkspaceSourceFilesLoaded({
-          monaco: args.monaco!,
-          state: supportState,
-        });
-      });
-    }
+  if (args.shouldLoadWorkspaceSupport && supportState.bootstrapPromise) {
+    return;
+  }
+
+  if (args.shouldLoadWorkspaceSupport && !supportState.sourceFilesLoaded) {
+    supportState.cancelDeferredSourceLoad?.();
+    supportState.cancelDeferredSourceLoad = null;
+    void ensureWorkspaceTypeScriptBootstrapLoaded({
+      monaco: args.monaco,
+      state: supportState,
+    });
     return;
   }
 
   if (!args.shouldLoadWorkspaceSupport) {
     supportState.cancelDeferredSourceLoad?.();
     supportState.cancelDeferredSourceLoad = null;
+    setMonacoTypeScriptSemanticDiagnosticsEnabled({
+      monaco: args.monaco,
+      enabled: true,
+    });
+    return;
   }
+
+  setMonacoTypeScriptSemanticDiagnosticsEnabled({
+    monaco: args.monaco,
+    enabled: true,
+  });
 }
 
 export function EditorMainPanel() {
@@ -251,12 +522,15 @@ export function EditorMainPanel() {
     editorLineNumbers,
     editorTabSize,
     editorWordWrap,
+    editorLspEnabled,
+    pythonLspCommand,
     setLayout,
     updateSettings,
     setActiveEditorTab,
     reorderEditorTabs,
     closeEditorTab,
     updateEditorContent,
+    openFileFromTree,
     sendEditorContextToChat,
     toggleEditorDiffMode,
     saveActiveEditorTab,
@@ -274,12 +548,15 @@ export function EditorMainPanel() {
     state.settings.editorLineNumbers,
     state.settings.editorTabSize,
     state.settings.editorWordWrap,
+    state.settings.editorLspEnabled,
+    state.settings.pythonLspCommand,
     state.setLayout,
     state.updateSettings,
     state.setActiveEditorTab,
     state.reorderEditorTabs,
     state.closeEditorTab,
     state.updateEditorContent,
+    state.openFileFromTree,
     state.sendEditorContextToChat,
     state.toggleEditorDiffMode,
     state.saveActiveEditorTab,
@@ -291,8 +568,31 @@ export function EditorMainPanel() {
   const [dropTargetTabId, setDropTargetTabId] = useState<string | null>(null);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const monacoRef = useRef<Monaco | null>(null);
+  const editorRef = useRef<MonacoEditorApi.IStandaloneCodeEditor | null>(null);
   const diffEditorRef = useRef<DiffEditorModelOwner | null>(null);
   const activeDiffTabIdRef = useRef<string | null>(null);
+  const pendingEditorNavigationRef = useRef<PendingEditorNavigation | null>(null);
+  const editorOpenerDisposableRef = useRef<MonacoDisposable | null>(null);
+  const workspaceRootPathRef = useRef(workspaceRootPath);
+  const languageIntelligenceSettingsRef = useRef<LanguageIntelligenceSettings>({
+    enabled: editorLspEnabled,
+    pythonLspCommand,
+  });
+  const languageIntelligenceRuntimeRef = useRef<LanguageIntelligenceRuntime>({
+    getWorkspaceRootPath: () => workspaceRootPathRef.current,
+    getSettings: () => languageIntelligenceSettingsRef.current,
+  });
+  const previousLanguageIntelligenceStateRef = useRef<{
+    rootPath: string;
+    enabled: boolean;
+    pythonLspCommand: string;
+  } | null>(null);
+
+  workspaceRootPathRef.current = workspaceRootPath;
+  languageIntelligenceSettingsRef.current = {
+    enabled: editorLspEnabled,
+    pythonLspCommand,
+  };
 
   const activeTab = editorTabs.find((tab) => tab.id === activeEditorTabId) ?? null;
   const isImageTab = (tab: { kind?: "text" | "image"; language: string } | null) =>
@@ -315,12 +615,48 @@ export function EditorMainPanel() {
   function configureMonaco(monaco: Monaco) {
     monacoRef.current = monaco;
     configureMonacoDefaults(monaco);
+    configureMonacoLanguageIntelligence({
+      monaco,
+      runtime: languageIntelligenceRuntimeRef.current,
+    });
+    if (!editorOpenerDisposableRef.current) {
+      editorOpenerDisposableRef.current = monaco.editor.registerEditorOpener({
+        openCodeEditor: async (
+          _source: MonacoEditorApi.ICodeEditor,
+          resource: { scheme: string; path: string },
+          selectionOrPosition?: IRange | IPosition,
+        ) => {
+          const filePath = toWorkspaceFilePath(resource);
+          if (!filePath) {
+            return false;
+          }
+          pendingEditorNavigationRef.current = {
+            filePath,
+            selection: toMonacoSelection(selectionOrPosition),
+          };
+          try {
+            await openFileFromTree({ filePath });
+            return true;
+          } catch {
+            pendingEditorNavigationRef.current = null;
+            return false;
+          }
+        },
+      });
+    }
     syncWorkspaceMonacoSupport({
       monaco,
       workspaceRootPath,
       shouldLoadWorkspaceSupport,
     });
   }
+
+  useEffect(() => {
+    return () => {
+      editorOpenerDisposableRef.current?.dispose();
+      editorOpenerDisposableRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!imagePreviewOpen) {
@@ -344,6 +680,87 @@ export function EditorMainPanel() {
       shouldLoadWorkspaceSupport,
     });
   }, [shouldLoadWorkspaceSupport, workspaceRootPath]);
+
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    const currentState = {
+      rootPath: workspaceRootPath,
+      enabled: editorLspEnabled,
+      pythonLspCommand,
+    };
+    const previousState = previousLanguageIntelligenceStateRef.current;
+    previousLanguageIntelligenceStateRef.current = currentState;
+
+    if (!monaco) {
+      return;
+    }
+
+    const rootsToStop = new Set<string>();
+    if (previousState?.rootPath && previousState.rootPath !== currentState.rootPath) {
+      rootsToStop.add(previousState.rootPath);
+    }
+    if (!currentState.enabled && currentState.rootPath) {
+      rootsToStop.add(currentState.rootPath);
+    }
+    if (
+      currentState.enabled
+      && previousState
+      && previousState.pythonLspCommand !== currentState.pythonLspCommand
+      && currentState.rootPath
+    ) {
+      rootsToStop.add(currentState.rootPath);
+    }
+
+    if (rootsToStop.size > 0) {
+      clearLanguageIntelligenceMarkers(monaco);
+      for (const rootPath of rootsToStop) {
+        void stopLanguageIntelligenceSessions(rootPath);
+      }
+    }
+
+    if (!currentState.enabled || !currentState.rootPath) {
+      clearLanguageIntelligenceMarkers(monaco);
+      return;
+    }
+
+    const shouldResync = !previousState
+      || previousState.rootPath !== currentState.rootPath
+      || previousState.enabled !== currentState.enabled
+      || previousState.pythonLspCommand !== currentState.pythonLspCommand;
+
+    if (shouldResync) {
+      resyncLanguageIntelligenceModels(monaco);
+    }
+  }, [editorLspEnabled, pythonLspCommand, workspaceRootPath]);
+
+  useEffect(() => {
+    return () => {
+      void stopLanguageIntelligenceSessions();
+    };
+  }, []);
+
+  useEffect(() => {
+    const pendingNavigation = pendingEditorNavigationRef.current;
+    const editor = editorRef.current;
+    if (!pendingNavigation || !editor || !activeTab || activeTabIsImage || Boolean(activeDiffSessionKey)) {
+      return;
+    }
+    if (activeTab.filePath !== pendingNavigation.filePath) {
+      return;
+    }
+    if (pendingNavigation.selection) {
+      editor.setSelection(pendingNavigation.selection);
+      editor.revealRangeInCenter(pendingNavigation.selection);
+    }
+    editor.focus();
+    pendingEditorNavigationRef.current = null;
+  }, [activeDiffSessionKey, activeTab, activeTabIsImage]);
+
+  useEffect(() => {
+    if (activeTabIsImage || Boolean(activeDiffSessionKey)) {
+      editorRef.current = null;
+    }
+  }, [activeDiffSessionKey, activeTabIsImage]);
 
   useLayoutEffect(() => {
     if (!activeDiffSessionKey) {
@@ -677,6 +1094,7 @@ export function EditorMainPanel() {
                 options={{
                   readOnly: false,
                   renderSideBySide: diffViewMode === "split",
+                  fixedOverflowWidgets: true,
                   minimap: { enabled: editorMinimap },
                   fontSize: editorFontSize,
                   fontFamily: editorFontFamily,
@@ -684,6 +1102,7 @@ export function EditorMainPanel() {
                   wordWrap: editorWordWrap ? "on" : "off",
                 }}
                 onMount={(editor) => {
+                  editorRef.current = null;
                   diffEditorRef.current = editor;
                   editor.getOriginalEditor().updateOptions({ tabSize: editorTabSize });
                   editor.getModifiedEditor().updateOptions({ tabSize: editorTabSize });
@@ -704,6 +1123,9 @@ export function EditorMainPanel() {
                 value={activeTab.content}
                 path={activeModelPath}
                 beforeMount={configureMonaco}
+                onMount={(editor) => {
+                  editorRef.current = editor;
+                }}
                 onChange={(value) =>
                   updateEditorContent({
                     tabId: activeTab.id,
@@ -712,6 +1134,7 @@ export function EditorMainPanel() {
                 }
                 theme={monacoTheme}
                 options={{
+                  fixedOverflowWidgets: true,
                   minimap: { enabled: editorMinimap },
                   fontSize: editorFontSize,
                   fontFamily: editorFontFamily,

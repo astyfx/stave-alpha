@@ -1,4 +1,5 @@
 import { registerFilesystemHandlers } from "./filesystem";
+import { registerLspHandlers } from "./lsp";
 import { registerPersistenceHandlers } from "./persistence";
 import { registerProviderHandlers } from "./provider";
 import { registerScmHandlers } from "./scm";
@@ -12,4 +13,5 @@ export function registerHandlers() {
   registerTerminalHandlers();
   registerScmHandlers();
   registerFilesystemHandlers();
+  registerLspHandlers();
 }

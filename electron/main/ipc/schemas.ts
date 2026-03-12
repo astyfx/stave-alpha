@@ -230,3 +230,32 @@ export const ListLatestWorkspaceTurnsArgsSchema = z.object({
 export const OpenExternalArgsSchema = z.object({
   url: z.string().min(1).max(2048),
 }).strict();
+
+const LspLanguageIdSchema = z.literal("python");
+
+const LspBaseRequestSchema = z.object({
+  rootPath: z.string().min(1).max(4096),
+  languageId: LspLanguageIdSchema,
+  commandOverride: z.string().max(4096).optional(),
+}).strict();
+
+export const LspSyncDocumentArgsSchema = LspBaseRequestSchema.extend({
+  filePath: z.string().min(1).max(4096),
+  documentLanguageId: z.string().min(1).max(200),
+  text: z.string().max(2_000_000),
+  version: z.number().int().min(1),
+}).strict();
+
+export const LspCloseDocumentArgsSchema = LspBaseRequestSchema.extend({
+  filePath: z.string().min(1).max(4096),
+}).strict();
+
+export const LspRequestArgsSchema = LspBaseRequestSchema.extend({
+  filePath: z.string().min(1).max(4096),
+  line: z.number().int().min(0).max(2_000_000),
+  character: z.number().int().min(0).max(20_000),
+}).strict();
+
+export const LspStopSessionsArgsSchema = z.object({
+  rootPath: z.string().max(4096).optional(),
+}).strict();

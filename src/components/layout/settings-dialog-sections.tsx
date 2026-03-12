@@ -771,7 +771,16 @@ function ReviewSection() {
 }
 
 function EditorSection() {
-  const [editorFontSize, editorFontFamily, editorWordWrap, editorMinimap, editorLineNumbers, editorTabSize] = useAppStore(
+  const [
+    editorFontSize,
+    editorFontFamily,
+    editorWordWrap,
+    editorMinimap,
+    editorLineNumbers,
+    editorTabSize,
+    editorLspEnabled,
+    pythonLspCommand,
+  ] = useAppStore(
     useShallow((state) => [
       state.settings.editorFontSize,
       state.settings.editorFontFamily,
@@ -779,6 +788,8 @@ function EditorSection() {
       state.settings.editorMinimap,
       state.settings.editorLineNumbers,
       state.settings.editorTabSize,
+      state.settings.editorLspEnabled,
+      state.settings.pythonLspCommand,
     ] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -856,6 +867,36 @@ function EditorSection() {
                 { value: "on", label: "On" },
                 { value: "off", label: "Off" },
               ]}
+            />
+          </LabeledField>
+        </SettingsCard>
+
+        <SettingsCard
+          title="Project Language Servers"
+          description="Optional LSP-backed intelligence for non-TypeScript languages. Python is supported first through a `pyright-langserver`-compatible server."
+        >
+          <LabeledField
+            title="Enable LSP Runtime"
+            description="Uses Electron-managed stdio language-server sessions per active workspace. Keep this off if you only want Monaco's built-in syntax support."
+          >
+            <ChoiceButtons
+              value={editorLspEnabled ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { editorLspEnabled: value === "on" } })}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </LabeledField>
+          <LabeledField
+            title="Python LSP Command"
+            description="Leave empty to auto-discover `pyright-langserver` or `basedpyright-langserver` from PATH. You can also point this at an absolute executable path."
+          >
+            <DraftInput
+              className="h-10 rounded-md border-border/80 bg-background font-mono text-sm"
+              placeholder="pyright-langserver"
+              value={pythonLspCommand}
+              onCommit={(nextValue) => updateSettings({ patch: { pythonLspCommand: nextValue } })}
             />
           </LabeledField>
         </SettingsCard>

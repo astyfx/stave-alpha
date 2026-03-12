@@ -10,6 +10,7 @@ Use `docs/` for architecture, feature behavior, runtime contracts, and user-faci
 - [Conversation flow](architecture/conversation-flow.md)
 - [Provider runtimes](providers/provider-runtimes.md)
 - [Session Replay](features/session-replay.md)
+- [Language intelligence](features/language-intelligence.md)
 - [Developer diagnostics](developer/diagnostics.md)
 - [shadcn preset](ui/shadcn-preset.md)
 

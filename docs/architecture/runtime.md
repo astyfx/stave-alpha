@@ -10,6 +10,7 @@ This is the primary app architecture:
 - `electron/preload.ts` exposes the safe `window.api` bridge
 - `electron/main.ts` handles IPC
 - `electron/providers/*` owns Claude and Codex SDK execution plus event mapping
+- `electron/main/lsp/*` owns optional stdio language-server sessions for Monaco
 - `electron/persistence/*` owns SQLite persistence
 
 The renderer does not call provider SDKs directly. It sends provider turn requests across the preload bridge, and Electron executes the SDK work in the main process.
