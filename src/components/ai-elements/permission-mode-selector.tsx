@@ -25,6 +25,17 @@ const CODEX_OPTIONS: PermissionModeOption[] = [
   { value: "untrusted", label: "Untrusted" },
 ];
 
+export function getPermissionModeOptions(providerId: "claude-code" | "codex"): readonly PermissionModeOption[] {
+  return providerId === "claude-code" ? CLAUDE_OPTIONS : CODEX_OPTIONS;
+}
+
+export function getPermissionModeLabel(args: {
+  providerId: "claude-code" | "codex";
+  value: PermissionModeValue;
+}) {
+  return getPermissionModeOptions(args.providerId).find((option) => option.value === args.value)?.label ?? args.value;
+}
+
 interface PermissionModeSelectorProps {
   providerId: "claude-code" | "codex";
   value: PermissionModeValue;
@@ -36,7 +47,7 @@ export function PermissionModeSelector(args: PermissionModeSelectorProps) {
   const { providerId, value, disabled, onSelect } = args;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const options = providerId === "claude-code" ? CLAUDE_OPTIONS : CODEX_OPTIONS;
+  const options = getPermissionModeOptions(providerId);
   const current = options.find((o) => o.value === value);
 
   useEffect(() => {
@@ -91,7 +102,7 @@ export function PermissionModeSelector(args: PermissionModeSelectorProps) {
 }
 
 export function cyclePermissionMode(args: { providerId: "claude-code" | "codex"; current: PermissionModeValue }): PermissionModeValue {
-  const options = args.providerId === "claude-code" ? CLAUDE_OPTIONS : CODEX_OPTIONS;
+  const options = getPermissionModeOptions(args.providerId);
   const idx = options.findIndex((o) => o.value === args.current);
   return options[(idx + 1) % options.length]!.value;
 }

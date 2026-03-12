@@ -6,6 +6,7 @@ import { filterCommandPaletteItems, getSlashCommandSearchQuery } from "@/lib/com
 import { cn } from "@/lib/utils";
 import { getAcceptedCommandPaletteItem, getNextCommandSelectionIndex, NO_COMMAND_SELECTION } from "./prompt-input.utils";
 import { ModelSelector, type ModelSelectorOption } from "./model-selector";
+import { PromptInputRuntimeBar, type PromptInputRuntimeControl, type PromptInputRuntimeStatusItem } from "./prompt-input-runtime-bar";
 import { PermissionModeSelector, cyclePermissionMode, type PermissionModeValue } from "./permission-mode-selector";
 
 interface PromptInputProps {
@@ -18,6 +19,8 @@ interface PromptInputProps {
   projectFiles: string[];
   attachedFilePath?: string;
   permissionMode?: PermissionModeValue;
+  runtimeQuickControls?: readonly PromptInputRuntimeControl[];
+  runtimeStatusItems?: readonly PromptInputRuntimeStatusItem[];
   commandPaletteItems?: CommandPaletteItem[];
   commandPaletteProviderNote?: CommandPaletteProviderNote;
   onValueChange: (value: string) => void;
@@ -39,6 +42,8 @@ export function PromptInput(args: PromptInputProps) {
     projectFiles,
     attachedFilePath,
     permissionMode,
+    runtimeQuickControls,
+    runtimeStatusItems,
     commandPaletteItems,
     commandPaletteProviderNote,
     onValueChange,
@@ -78,6 +83,7 @@ export function PromptInput(args: PromptInputProps) {
     && dismissedCommandQuery !== commandQuery
     && (filteredCommandItems.length > 0 || commandPaletteProviderNote)
   );
+  const hasRuntimePermissionControl = Boolean(runtimeQuickControls?.some((control) => control.id === "permission-mode"));
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -171,7 +177,7 @@ export function PromptInput(args: PromptInputProps) {
           disabled={interactionsDisabled}
           onSelect={({ selection }) => onModelSelect({ selection })}
         />
-        {permissionMode !== undefined && onPermissionModeChange ? (
+        {permissionMode !== undefined && onPermissionModeChange && !hasRuntimePermissionControl ? (
           <PermissionModeSelector
             providerId={selectedModel.providerId}
             value={permissionMode}
@@ -424,6 +430,11 @@ export function PromptInput(args: PromptInputProps) {
           </Button>
         </div>
       </div>
+      <PromptInputRuntimeBar
+        quickControls={runtimeQuickControls}
+        statusItems={runtimeStatusItems}
+        disabled={interactionsDisabled}
+      />
     </form>
   );
 }

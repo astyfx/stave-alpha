@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.9](https://github.com/astyfx/stave/compare/v0.0.8...v0.0.9) (2026-03-12)
+
+### Features
+
+* add Monaco workspace language intelligence ([f42f735](https://github.com/astyfx/stave/commit/f42f7354ff65a17e42dba6cde5c042396a6f3354))
+
+### Highlights
+
+- added workspace-backed Monaco language intelligence for TypeScript and JavaScript by loading the active workspace `tsconfig.json`, source files, and type libraries into the editor worker
+- added an Electron-managed Python LSP path so Monaco can request hover, completion, definition, and diagnostics through stdio-backed language-server sessions
+- added provider runtime controls and status lines under the chat composer, including inline Claude/Codex runtime visibility plus Claude agent progress summaries rendered from `task_progress.summary`
+- refreshed Claude and Codex runtime settings around effort, thinking, web search, raw reasoning, and future Claude SDK candidates, with updated provider runtime documentation
+- fixed desktop native module compatibility for Electron 41 by rebuilding `better-sqlite3` and `node-pty` against the current runtime ABI and automating the `better-sqlite3` patch step in the rebuild workflow
+
 ## [0.0.8](https://github.com/astyfx/stave/compare/v0.0.7...v0.0.8) (2026-03-11)
 
 ### Bug Fixes

@@ -80,6 +80,8 @@ Rebuild the native Electron modules before testing a real desktop build without 
 bun run rebuild:electron-deps
 ```
 
+This rebuild now patches and recompiles `better-sqlite3` and `node-pty` against the current Electron runtime ABI used by Stave.
+
 Useful packaging commands:
 
 ```bash
@@ -96,6 +98,7 @@ Stable project documentation now lives under `docs/`.
 - [Runtime architecture](docs/architecture/runtime.md)
 - [Conversation flow](docs/architecture/conversation-flow.md)
 - [Provider runtimes](docs/providers/provider-runtimes.md)
+- [Future SDK backlog](docs/future/claude-sdk-candidates.md)
 - [Session Replay](docs/features/session-replay.md)
 - [Language intelligence](docs/features/language-intelligence.md)
 - [Developer diagnostics](docs/developer/diagnostics.md)

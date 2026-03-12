@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildClaudeApprovalPermissionResult,
+  resolveClaudeAgentProgressSummaries,
   buildClaudeSystemPrompt,
   buildClaudeUserInputPermissionResult,
   mapClaudeMessageToEvents,
@@ -41,6 +42,23 @@ describe("mapClaudeMessageToEvents", () => {
 
     expect(events).toEqual([
       { type: "text", text: "Current cost: $0.12" },
+    ]);
+  });
+
+  test("surfaces Claude task progress summaries as system events", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "system",
+        subtype: "task_progress",
+        summary: "Analyzing authentication module",
+        uuid: "msg-progress-1",
+        session_id: "session-1",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([
+      { type: "system", content: "Subagent progress: Analyzing authentication module" },
     ]);
   });
 });
@@ -111,5 +129,15 @@ describe("buildClaudeSystemPrompt", () => {
 
     expect(systemPrompt.startsWith("Follow repository conventions.")).toBe(true);
     expect(systemPrompt).toContain("Resolve every relative filesystem path against the workspace root above.");
+  });
+});
+
+describe("resolveClaudeAgentProgressSummaries", () => {
+  test("preserves explicit false so the SDK can be forced off", () => {
+    expect(resolveClaudeAgentProgressSummaries(false)).toBe(false);
+  });
+
+  test("returns undefined when no override is set", () => {
+    expect(resolveClaudeAgentProgressSummaries(undefined)).toBeUndefined();
   });
 });

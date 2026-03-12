@@ -203,6 +203,7 @@ export interface AppSettings {
   claudeAllowUnsandboxedCommands: boolean;
   claudeEffort: "low" | "medium" | "high" | "max";
   claudeThinkingMode: "adaptive" | "enabled" | "disabled";
+  claudeAgentProgressSummaries: boolean;
   codexSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   codexNetworkAccessEnabled: boolean;
   codexApprovalPolicy: "never" | "on-request" | "untrusted";
@@ -347,6 +348,7 @@ const defaultSettings: AppSettings = {
   claudeAllowUnsandboxedCommands: true,
   claudeEffort: "medium",
   claudeThinkingMode: "adaptive",
+  claudeAgentProgressSummaries: false,
   codexSandboxMode: "workspace-write",
   codexNetworkAccessEnabled: true,
   codexApprovalPolicy: "on-request",
@@ -1962,6 +1964,7 @@ export const useAppStore = create<AppState>()(
             claudeAllowUnsandboxedCommands: get().settings.claudeAllowUnsandboxedCommands,
             claudeEffort: get().settings.claudeEffort,
             claudeThinkingMode: get().settings.claudeThinkingMode,
+            claudeAgentProgressSummaries: get().settings.claudeAgentProgressSummaries,
             ...(provider === "claude-code"
               && providerConversation?.["claude-code"]?.trim()
               ? { claudeResumeSessionId: providerConversation["claude-code"] }

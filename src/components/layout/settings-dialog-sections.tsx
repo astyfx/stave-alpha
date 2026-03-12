@@ -914,6 +914,7 @@ function ProvidersSection() {
     claudeAllowUnsandboxedCommands,
     claudeEffort,
     claudeThinkingMode,
+    claudeAgentProgressSummaries,
     codexSandboxMode,
     codexNetworkAccessEnabled,
     codexApprovalPolicy,
@@ -931,6 +932,7 @@ function ProvidersSection() {
       state.settings.claudeAllowUnsandboxedCommands,
       state.settings.claudeEffort,
       state.settings.claudeThinkingMode,
+      state.settings.claudeAgentProgressSummaries,
       state.settings.codexSandboxMode,
       state.settings.codexNetworkAccessEnabled,
       state.settings.codexApprovalPolicy,
@@ -971,7 +973,7 @@ function ProvidersSection() {
           </div>
         </SettingsCard>
 
-        <SettingsCard title="Claude Runtime Controls" description="Permission and sandbox behavior passed into each Claude turn.">
+        <SettingsCard title="Claude Runtime Controls" description="Permission, sandbox, thinking, and subagent progress behavior passed into each Claude turn.">
           <LabeledField title="Permission Mode">
             <Select
               value={claudePermissionMode}
@@ -1067,6 +1069,19 @@ function ProvidersSection() {
                 <SelectItem value="max">max</SelectItem>
               </SelectContent>
             </Select>
+          </LabeledField>
+          <LabeledField
+            title="Agent Progress Summaries"
+            description="Enables Claude SDK `task_progress.summary` updates for running subagents."
+          >
+            <ChoiceButtons
+              value={claudeAgentProgressSummaries ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { claudeAgentProgressSummaries: value === "on" } })}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
           </LabeledField>
         </SettingsCard>
 
@@ -1294,7 +1309,7 @@ function DeveloperSection() {
               Supported Codex baseline
             </p>
             <p className="mt-1">
-              Stave targets Codex SDK `0.113.0` and expects a local `codex` CLI around `0.113.0`.
+              Stave targets Codex SDK `0.114.0` and expects a local `codex` CLI around `0.114.0`.
               If your installed CLI is older, update it or point this field at the version you want Stave to use.
             </p>
           </div>

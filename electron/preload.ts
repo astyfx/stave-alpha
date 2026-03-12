@@ -32,6 +32,7 @@ interface StreamTurnArgs {
     claudeMaxBudgetUsd?: number;
     claudeEffort?: "low" | "medium" | "high" | "max";
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
+    claudeAgentProgressSummaries?: boolean;
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
     claudeResumeSessionId?: string;

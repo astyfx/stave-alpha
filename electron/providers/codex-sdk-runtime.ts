@@ -15,8 +15,8 @@ import path from "node:path";
 const threadByTask = new Map<string, Thread>();
 const threadIdByTask = new Map<string, string>();
 
-const SUPPORTED_CODEX_SDK_VERSION = "0.113.0";
-const SUPPORTED_CODEX_CLI_VERSION = "0.113.0";
+const SUPPORTED_CODEX_SDK_VERSION = "0.114.0";
+const SUPPORTED_CODEX_CLI_VERSION = "0.114.0";
 
 function parseBooleanEnv(args: { value: string | undefined; fallback: boolean }) {
   const normalized = args.value?.trim().toLowerCase();
@@ -123,9 +123,13 @@ export function buildCodexConfigOverrides(args: {
   const config: Record<string, string | boolean> = {};
   const summaryMode = args.runtimeOptions?.codexReasoningSummary;
   const supportsSummaries = args.runtimeOptions?.codexSupportsReasoningSummaries;
+  const hasExplicitRawReasoningToggle = Object.prototype.hasOwnProperty.call(
+    args.runtimeOptions ?? {},
+    "codexShowRawAgentReasoning",
+  );
 
-  if (args.runtimeOptions?.codexShowRawAgentReasoning) {
-    config.show_raw_agent_reasoning = true;
+  if (hasExplicitRawReasoningToggle) {
+    config.show_raw_agent_reasoning = Boolean(args.runtimeOptions?.codexShowRawAgentReasoning);
   }
   if (summaryMode && summaryMode !== "auto") {
     config.model_reasoning_summary = summaryMode;

@@ -1,7 +1,10 @@
 import { PromptInput, PromptSuggestion, PromptSuggestions } from "@/components/ai-elements";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ModelSelectorOption } from "@/components/ai-elements/model-selector";
-import type { PermissionModeValue } from "@/components/ai-elements/permission-mode-selector";
+import {
+  getPermissionModeOptions,
+  type PermissionModeValue,
+} from "@/components/ai-elements/permission-mode-selector";
 import { buildCommandPaletteItems } from "@/lib/commands";
 import {
   getCachedProviderCommandCatalog,
@@ -32,6 +35,72 @@ interface ChatInputProps {
 const EMPTY_PROMPT_DRAFT = { text: "", attachedFilePath: "" };
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const PROMPT_DRAFT_SAVE_DELAY_MS = 250;
+const CLAUDE_THINKING_OPTIONS = [
+  { value: "adaptive", label: "Adaptive" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+] as const;
+const CLAUDE_EFFORT_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "max", label: "Max" },
+] as const;
+const CODEX_EFFORT_OPTIONS = [
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "X-High" },
+] as const;
+const CODEX_WEB_SEARCH_OPTIONS = [
+  { value: "disabled", label: "Disabled" },
+  { value: "cached", label: "Cached" },
+  { value: "live", label: "Live" },
+] as const;
+const CODEX_REASONING_SUMMARY_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "concise", label: "Concise" },
+  { value: "detailed", label: "Detailed" },
+  { value: "none", label: "None" },
+] as const;
+const CODEX_REASONING_SUPPORT_OPTIONS = [
+  { value: "auto", label: "Auto" },
+  { value: "enabled", label: "Enabled" },
+  { value: "disabled", label: "Disabled" },
+] as const;
+
+function findOptionLabel(
+  options: ReadonlyArray<{ value: string; label: string }>,
+  value: string,
+) {
+  return options.find((option) => option.value === value)?.label ?? value;
+}
+
+function formatProviderTimeout(value: number) {
+  return `${Math.round(value / 60000)} min`;
+}
+
+function formatTitleCaseValue(value: string) {
+  return value
+    .split(/[-_]+/g)
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatShortPath(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  const parts = normalized.split(/[\\/]+/).filter(Boolean);
+  if (parts.length <= 2) {
+    return normalized;
+  }
+  return `.../${parts.slice(-2).join("/")}`;
+}
 
 interface ChatInputSuggestionsProps {
   activeTaskId: string;
@@ -106,24 +175,44 @@ export function ChatInput(args: ChatInputProps = {}) {
     modelClaude,
     modelCodex,
     customCommands,
+    providerTimeoutMs,
     claudePermissionMode,
     claudeAllowDangerouslySkipPermissions,
     claudeSandboxEnabled,
     claudeAllowUnsandboxedCommands,
     claudeEffort,
     claudeThinkingMode,
+    claudeAgentProgressSummaries,
+    codexSandboxMode,
+    codexNetworkAccessEnabled,
     codexApprovalPolicy,
+    codexModelReasoningEffort,
+    codexWebSearchMode,
+    codexShowRawAgentReasoning,
+    codexReasoningSummary,
+    codexSupportsReasoningSummaries,
+    codexPathOverride,
   ] = useAppStore(useShallow((state) => [
     state.settings.modelClaude,
     state.settings.modelCodex,
     state.settings.customCommands,
+    state.settings.providerTimeoutMs,
     state.settings.claudePermissionMode,
     state.settings.claudeAllowDangerouslySkipPermissions,
     state.settings.claudeSandboxEnabled,
     state.settings.claudeAllowUnsandboxedCommands,
     state.settings.claudeEffort,
     state.settings.claudeThinkingMode,
+    state.settings.claudeAgentProgressSummaries,
+    state.settings.codexSandboxMode,
+    state.settings.codexNetworkAccessEnabled,
     state.settings.codexApprovalPolicy,
+    state.settings.codexModelReasoningEffort,
+    state.settings.codexWebSearchMode,
+    state.settings.codexShowRawAgentReasoning,
+    state.settings.codexReasoningSummary,
+    state.settings.codexSupportsReasoningSummaries,
+    state.settings.codexPathOverride,
   ] as const));
   const providerSelectionTarget = activeTaskId || "draft:session";
   const [draftText, setDraftText] = useState(promptDraft.text);
@@ -153,6 +242,181 @@ export function ChatInput(args: ChatInputProps = {}) {
       available: providerAvailability[providerId],
     }))
   );
+  const runtimeQuickControls = useMemo(() => {
+    const permissionOptions = getPermissionModeOptions(activeProvider).map((option) => ({
+      value: option.value,
+      label: option.label,
+    }));
+
+    if (activeProvider === "claude-code") {
+      return [
+        {
+          id: "permission-mode",
+          label: "Permission",
+          value: permissionMode,
+          options: permissionOptions,
+          onSelect: (value: string) => updateSettings({
+            patch: {
+              claudePermissionMode: value as typeof claudePermissionMode,
+            },
+          }),
+        },
+        {
+          id: "thinking-mode",
+          label: "Thinking",
+          value: claudeThinkingMode,
+          options: CLAUDE_THINKING_OPTIONS,
+          onSelect: (value: string) => updateSettings({
+            patch: {
+              claudeThinkingMode: value as typeof claudeThinkingMode,
+            },
+          }),
+        },
+        {
+          id: "effort",
+          label: "Effort",
+          value: claudeEffort,
+          options: CLAUDE_EFFORT_OPTIONS,
+          onSelect: (value: string) => updateSettings({
+            patch: {
+              claudeEffort: value as typeof claudeEffort,
+            },
+          }),
+        },
+      ];
+    }
+
+    return [
+      {
+        id: "permission-mode",
+        label: "Approval",
+        value: permissionMode,
+        options: permissionOptions,
+        onSelect: (value: string) => updateSettings({
+          patch: {
+            codexApprovalPolicy: value as typeof codexApprovalPolicy,
+          },
+        }),
+      },
+      {
+        id: "effort",
+        label: "Effort",
+        value: codexModelReasoningEffort,
+        options: CODEX_EFFORT_OPTIONS,
+        onSelect: (value: string) => updateSettings({
+          patch: {
+            codexModelReasoningEffort: value as typeof codexModelReasoningEffort,
+          },
+        }),
+      },
+      {
+        id: "web-search",
+        label: "Web Search",
+        value: codexWebSearchMode,
+        options: CODEX_WEB_SEARCH_OPTIONS,
+        onSelect: (value: string) => updateSettings({
+          patch: {
+            codexWebSearchMode: value as typeof codexWebSearchMode,
+          },
+        }),
+      },
+    ];
+  }, [
+    activeProvider,
+    claudeEffort,
+    claudePermissionMode,
+    claudeThinkingMode,
+    codexApprovalPolicy,
+    codexModelReasoningEffort,
+    codexWebSearchMode,
+    permissionMode,
+    updateSettings,
+  ]);
+  const runtimeStatusItems = useMemo(() => {
+    if (activeProvider === "claude-code") {
+      return [
+        {
+          id: "timeout",
+          label: "Timeout",
+          value: formatProviderTimeout(providerTimeoutMs),
+        },
+        {
+          id: "sandbox",
+          label: "Sandbox",
+          value: claudeSandboxEnabled ? "Enabled" : "Disabled",
+        },
+        {
+          id: "unsandboxed",
+          label: "Unsandboxed",
+          value: claudeAllowUnsandboxedCommands ? "On" : "Off",
+        },
+        {
+          id: "dangerous-skip",
+          label: "Dangerous Skip",
+          value: claudeAllowDangerouslySkipPermissions ? "On" : "Off",
+        },
+        {
+          id: "progress-summaries",
+          label: "Progress Summaries",
+          value: claudeAgentProgressSummaries ? "On" : "Off",
+        },
+      ];
+    }
+
+    return [
+      {
+        id: "timeout",
+        label: "Timeout",
+        value: formatProviderTimeout(providerTimeoutMs),
+      },
+      {
+        id: "sandbox",
+        label: "Sandbox",
+        value: formatTitleCaseValue(codexSandboxMode),
+        tone: codexSandboxMode === "danger-full-access" ? "warning" as const : "default" as const,
+      },
+      {
+        id: "network",
+        label: "Network",
+        value: codexNetworkAccessEnabled ? "On" : "Off",
+      },
+      {
+        id: "raw-reasoning",
+        label: "Raw Reasoning",
+        value: codexShowRawAgentReasoning ? "On" : "Off",
+      },
+      {
+        id: "summary",
+        label: "Summary",
+        value: findOptionLabel(CODEX_REASONING_SUMMARY_OPTIONS, codexReasoningSummary),
+      },
+      {
+        id: "summary-support",
+        label: "Summary Support",
+        value: findOptionLabel(CODEX_REASONING_SUPPORT_OPTIONS, codexSupportsReasoningSummaries),
+      },
+      ...(codexPathOverride.trim()
+        ? [{
+            id: "codex-binary",
+            label: "Binary",
+            value: formatShortPath(codexPathOverride),
+          }]
+        : []),
+    ];
+  }, [
+    activeProvider,
+    claudeAllowDangerouslySkipPermissions,
+    claudeAgentProgressSummaries,
+    claudeAllowUnsandboxedCommands,
+    claudeSandboxEnabled,
+    codexNetworkAccessEnabled,
+    codexPathOverride,
+    codexReasoningSummary,
+    codexSandboxMode,
+    codexShowRawAgentReasoning,
+    codexSupportsReasoningSummaries,
+    providerTimeoutMs,
+  ]);
 
   function cancelPendingDraftSave() {
     if (draftSaveTimerRef.current === null) {
@@ -286,6 +550,7 @@ export function ChatInput(args: ChatInputProps = {}) {
         claudeAllowUnsandboxedCommands,
         claudeEffort,
         claudeThinkingMode,
+        claudeAgentProgressSummaries,
       },
     }).then((response) => {
       if (cancelled) {
@@ -323,6 +588,7 @@ export function ChatInput(args: ChatInputProps = {}) {
   }, [
     activeProvider,
     claudeAllowDangerouslySkipPermissions,
+    claudeAgentProgressSummaries,
     claudeAllowUnsandboxedCommands,
     claudeEffort,
     claudePermissionMode,
@@ -407,6 +673,8 @@ export function ChatInput(args: ChatInputProps = {}) {
             });
           }}
           permissionMode={permissionMode}
+          runtimeQuickControls={runtimeQuickControls}
+          runtimeStatusItems={runtimeStatusItems}
           onPermissionModeChange={(value) => {
             if (activeProvider === "claude-code") {
               updateSettings({ patch: { claudePermissionMode: value as typeof claudePermissionMode } });

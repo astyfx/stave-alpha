@@ -22,6 +22,7 @@ const RuntimeOptionsSchema = z.object({
   claudeMaxBudgetUsd: z.number().min(0).max(10_000).optional(),
   claudeEffort: z.union([z.literal("low"), z.literal("medium"), z.literal("high"), z.literal("max")]).optional(),
   claudeThinkingMode: z.union([z.literal("adaptive"), z.literal("enabled"), z.literal("disabled")]).optional(),
+  claudeAgentProgressSummaries: z.boolean().optional(),
   claudeAllowedTools: z.array(z.string().max(200)).max(200).optional(),
   claudeDisallowedTools: z.array(z.string().max(200)).max(200).optional(),
   claudeResumeSessionId: z.string().max(200).optional(),

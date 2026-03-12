@@ -88,7 +88,7 @@ describe("mapCodexItemEvent", () => {
 });
 
 describe("buildCodexConfigOverrides", () => {
-  test("returns only explicit Codex config overrides", () => {
+  test("returns explicit Codex config overrides including raw reasoning on", () => {
     expect(buildCodexConfigOverrides({
       runtimeOptions: {
         codexShowRawAgentReasoning: true,
@@ -102,10 +102,21 @@ describe("buildCodexConfigOverrides", () => {
     });
   });
 
-  test("omits auto/default Codex config values", () => {
+  test("keeps an explicit raw reasoning off toggle so the UI can disable it reliably", () => {
     expect(buildCodexConfigOverrides({
       runtimeOptions: {
         codexShowRawAgentReasoning: false,
+        codexReasoningSummary: "auto",
+        codexSupportsReasoningSummaries: "auto",
+      },
+    })).toEqual({
+      show_raw_agent_reasoning: false,
+    });
+  });
+
+  test("omits auto/default Codex config values when no explicit toggle is present", () => {
+    expect(buildCodexConfigOverrides({
+      runtimeOptions: {
         codexReasoningSummary: "auto",
         codexSupportsReasoningSummaries: "auto",
       },

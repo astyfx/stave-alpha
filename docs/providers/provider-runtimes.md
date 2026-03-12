@@ -18,6 +18,7 @@ Claude event mapping:
 - thinking or thinking delta -> `thinking`
 - tool use -> `tool`
 - `ExitPlanMode` tool payload -> `plan_ready`
+- `task_progress.summary` -> `system` when Claude agent progress summaries are enabled
 - stream or runtime failures -> `error`
 
 Claude-specific runtime controls come from the UI and runtime options:
@@ -26,8 +27,13 @@ Claude-specific runtime controls come from the UI and runtime options:
 - dangerous skip permissions
 - sandbox enabled
 - allow unsandboxed commands
+- agent progress summaries
 - provider timeout
 - debug stream logging
+
+In the chat composer, Stave mirrors the active provider runtime in a status line under the prompt box so the current turn settings stay visible. Permission/approval plus the most-used provider controls can also be adjusted inline there.
+
+When Claude `agentProgressSummaries` is enabled, Stave forwards the SDK flag explicitly and renders incoming `task_progress.summary` updates as inline system events in the active assistant message.
 
 Claude path and approval handling:
 
@@ -55,7 +61,7 @@ Codex event mapping:
 - command execution -> `tool`
 - MCP tool calls -> `tool`
 - web search -> `tool`
-- todo list -> `thinking`
+- todo list -> `tool`
 - file changes -> diff events
 - failures -> `error`
 
@@ -70,12 +76,14 @@ Codex-specific runtime controls come from the UI and runtime options:
 - provider timeout
 - debug stream logging
 
+Stave now forwards an explicit `show_raw_agent_reasoning: false` override when the Codex UI toggle is off, so local CLI defaults or config files do not leave raw reasoning enabled unexpectedly.
+
 Codex threads are keyed by task/cwd plus the active sandbox, network, approval, model, reasoning, and web-search settings so Stave can preserve thread context without mixing incompatible runtime modes.
 
 ## Supported Codex baseline
 
-- Codex SDK: `@openai/codex-sdk@0.113.0`
-- Codex CLI baseline: `0.113.0`
+- Codex SDK: `@openai/codex-sdk@0.114.0`
+- Codex CLI baseline: `0.114.0`
 
 Stave expects a local Codex CLI installation. A user-configured binary path takes precedence over PATH-based discovery.
 

@@ -443,6 +443,27 @@ function toClaudeThinkingConfig(thinkingMode?: "adaptive" | "enabled" | "disable
   return undefined;
 }
 
+export function resolveClaudeAgentProgressSummaries(value?: boolean) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function buildClaudeTaskProgressEvents(message: SDKSystemMessage & {
+  subtype?: string;
+  summary?: string;
+}) {
+  if (message.subtype !== "task_progress") {
+    return [];
+  }
+  const summary = message.summary?.trim();
+  if (!summary) {
+    return [];
+  }
+  return [{
+    type: "system" as const,
+    content: `Subagent progress: ${summary}`,
+  }];
+}
+
 function buildClaudeUsageEvent(resultMsg: SDKResultMessage): BridgeEvent {
   return {
     type: "usage",
@@ -476,7 +497,7 @@ export function mapClaudeMessageToEvents(args: {
   const { message, claudeDebugStream } = args;
 
   if (message.type === "system") {
-    const sysMsg = message as SDKSystemMessage & { subtype?: string; content?: string };
+    const sysMsg = message as SDKSystemMessage & { subtype?: string; content?: string; summary?: string };
     if (sysMsg.subtype === "local_command_output" && typeof sysMsg.content === "string" && sysMsg.content.trim()) {
       return [{ type: "text", text: sysMsg.content }];
     }
@@ -486,6 +507,10 @@ export function mapClaudeMessageToEvents(args: {
         providerId: "claude-code",
         nativeConversationId: sysMsg.session_id,
       }];
+    }
+    const taskProgressEvents = buildClaudeTaskProgressEvents(sysMsg);
+    if (taskProgressEvents.length > 0) {
+      return taskProgressEvents;
     }
     if (claudeDebugStream) {
       console.debug("[claude-sdk-runtime] system init", sysMsg.subtype, sysMsg.session_id);
@@ -756,6 +781,7 @@ export async function getClaudeCommandCatalog(args: {
         fallback: true,
       });
     const thinking = toClaudeThinkingConfig(args.runtimeOptions?.claudeThinkingMode);
+    const agentProgressSummaries = resolveClaudeAgentProgressSummaries(args.runtimeOptions?.claudeAgentProgressSummaries);
 
     stream = queryFn({
       prompt: "",
@@ -768,6 +794,7 @@ export async function getClaudeCommandCatalog(args: {
         ...(args.runtimeOptions?.claudeSystemPrompt ? { systemPrompt: args.runtimeOptions.claudeSystemPrompt } : {}),
         ...(args.runtimeOptions?.claudeEffort ? { effort: args.runtimeOptions.claudeEffort } : {}),
         ...(thinking ? { thinking } : {}),
+        ...(agentProgressSummaries !== undefined ? { agentProgressSummaries } : {}),
         ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
         ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
         sandbox: {
@@ -915,6 +942,7 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         fallback: true,
       });
     const thinking = toClaudeThinkingConfig(args.runtimeOptions?.claudeThinkingMode);
+    const agentProgressSummaries = resolveClaudeAgentProgressSummaries(args.runtimeOptions?.claudeAgentProgressSummaries);
     const claudeSystemPrompt = buildClaudeSystemPrompt({
       cwd: runtimeCwd,
       baseSystemPrompt: args.runtimeOptions?.claudeSystemPrompt,
@@ -939,6 +967,7 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         ...(typeof args.runtimeOptions?.claudeMaxBudgetUsd === "number" ? { maxBudgetUsd: args.runtimeOptions.claudeMaxBudgetUsd } : {}),
         ...(args.runtimeOptions?.claudeEffort ? { effort: args.runtimeOptions.claudeEffort } : {}),
         ...(thinking ? { thinking } : {}),
+        ...(agentProgressSummaries !== undefined ? { agentProgressSummaries } : {}),
         ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
         ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
         canUseTool: async (toolName, input, options) => {

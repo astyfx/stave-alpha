@@ -9,6 +9,7 @@ Use `docs/` for architecture, feature behavior, runtime contracts, and user-faci
 - [Architecture](architecture/runtime.md)
 - [Conversation flow](architecture/conversation-flow.md)
 - [Provider runtimes](providers/provider-runtimes.md)
+- [Future SDK backlog](future/claude-sdk-candidates.md)
 - [Session Replay](features/session-replay.md)
 - [Language intelligence](features/language-intelligence.md)
 - [Developer diagnostics](developer/diagnostics.md)
