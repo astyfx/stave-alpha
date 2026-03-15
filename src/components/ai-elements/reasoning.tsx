@@ -28,12 +28,8 @@ export function Reasoning({ className, isStreaming = false, defaultOpen = true, 
   const [open, setOpen] = useState(defaultOpen);
 
   useEffect(() => {
-    if (isStreaming) {
-      setOpen(true);
-    } else {
-      setOpen(defaultOpen);
-    }
-  }, [isStreaming, defaultOpen]);
+    setOpen(defaultOpen);
+  }, [defaultOpen]);
 
   const contextValue = useMemo(() => ({ isStreaming, open, setOpen }), [isStreaming, open]);
 
