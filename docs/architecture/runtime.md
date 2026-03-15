@@ -15,6 +15,8 @@ This is the primary app architecture:
 
 The renderer does not call provider SDKs directly. It sends provider turn requests across the preload bridge, and Electron executes the SDK work in the main process.
 
+The same terminal bridge is also used for local workspace automation such as running an optional post-create bootstrap command when a new git worktree workspace is created.
+
 ## Browser dev runtime
 
 When Stave runs as plain Vite in a browser, there is no Electron preload bridge, IPC, or main process. In that mode, `server/dev-server.ts` provides a local HTTP bridge for provider turns, terminal commands, and source-control actions.

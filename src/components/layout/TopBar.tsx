@@ -33,6 +33,7 @@ export function TopBar() {
     workspaceRootName,
     activeWorkspaceBranch,
     activeWorkspaceCwd,
+    newWorkspaceInitCommand,
     setDarkMode,
     createWorkspace,
     createProject,
@@ -44,6 +45,7 @@ export function TopBar() {
     state.workspaceRootName,
     state.workspaceBranchById[state.activeWorkspaceId] ?? "main",
     state.workspacePathById[state.activeWorkspaceId] ?? state.projectPath ?? undefined,
+    state.settings.newWorkspaceInitCommand,
     state.setDarkMode,
     state.createWorkspace,
     state.createProject,
@@ -227,6 +229,7 @@ export function TopBar() {
         open={createWorkspaceOpen}
         activeBranch={activeWorkspaceBranch}
         cwd={activeWorkspaceCwd}
+        defaultInitCommand={newWorkspaceInitCommand}
         onOpenChange={setCreateWorkspaceOpen}
         onCreateWorkspace={createWorkspace}
       />

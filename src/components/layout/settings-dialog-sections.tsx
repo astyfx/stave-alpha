@@ -215,7 +215,12 @@ const DraftTextarea = memo(function DraftTextarea(args: DraftTextareaProps) {
 });
 
 function GeneralSection() {
-  const language = useAppStore((state) => state.settings.language);
+  const [language, newWorkspaceInitCommand] = useAppStore(
+    useShallow((state) => [
+      state.settings.language,
+      state.settings.newWorkspaceInitCommand,
+    ] as const),
+  );
   const updateSettings = useAppStore((state) => state.updateSettings);
 
   return (
@@ -228,6 +233,22 @@ function GeneralSection() {
             value={language}
             onCommit={(nextValue) => updateSettings({ patch: { language: nextValue } })}
           />
+        </SettingsCard>
+        <SettingsCard
+          title="New Workspace Defaults"
+          description="Optional shell command to run after Stave creates a new git worktree workspace."
+        >
+          <LabeledField
+            title="Post-Create Command"
+            description="Runs once in the new workspace root after creation. Useful for `bun install`, `npm install`, or multi-line bootstrap commands."
+          >
+            <DraftTextarea
+              className="min-h-[120px] rounded-md border-border/80 bg-background font-mono text-sm"
+              value={newWorkspaceInitCommand}
+              onCommit={(nextValue) => updateSettings({ patch: { newWorkspaceInitCommand: nextValue } })}
+              placeholder="bun install"
+            />
+          </LabeledField>
         </SettingsCard>
       </SectionStack>
     </>

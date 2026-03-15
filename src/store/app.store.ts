@@ -161,6 +161,7 @@ export interface AppSettings {
   themeMode: "light" | "dark" | "system";
   themeOverrides: Record<ThemeModeName, ThemeOverrideValues>;
   language: string;
+  newWorkspaceInitCommand: string;
   updateMode: "auto" | "manual";
   httpProxy: string;
   smartSuggestions: boolean;
@@ -250,7 +251,12 @@ interface AppState {
   hydrateWorkspaces: () => Promise<void>;
   flushActiveWorkspaceSnapshot: (args?: { sync?: boolean }) => Promise<void>;
   createProject: (args: { name?: string }) => Promise<void>;
-  createWorkspace: (args: { name: string; mode: "branch" | "clean"; fromBranch?: string }) => Promise<{ ok: boolean; message?: string }>;
+  createWorkspace: (args: {
+    name: string;
+    mode: "branch" | "clean";
+    fromBranch?: string;
+    initCommand?: string;
+  }) => Promise<{ ok: boolean; message?: string; noticeLevel?: "success" | "warning" }>;
   deleteWorkspace: (args: { workspaceId: string }) => Promise<void>;
   switchWorkspace: (args: { workspaceId: string }) => Promise<void>;
   setDarkMode: (args: { enabled: boolean }) => void;
@@ -310,6 +316,7 @@ const defaultSettings: AppSettings = {
     dark: {},
   },
   language: "English",
+  newWorkspaceInitCommand: "",
   updateMode: "auto",
   httpProxy: "",
   smartSuggestions: true,
@@ -381,6 +388,28 @@ function buildMessageId(args: { taskId: string; count: number }) {
 
 function buildRecentTimestamp() {
   return new Date().toISOString();
+}
+
+function normalizeWorkspaceInitCommand(args: { value?: string | null }) {
+  return args.value?.trim() ?? "";
+}
+
+function summarizeTerminalCommandDetail(args: { stdout?: string; stderr?: string; fallback: string }) {
+  const detail = (args.stderr || args.stdout || "").trim();
+  if (!detail) {
+    return args.fallback;
+  }
+
+  return detail.split("\n")[0]?.trim().slice(0, 240) || args.fallback;
+}
+
+function summarizeWorkspaceInitCommand(args: { command: string; maxLength?: number }) {
+  const normalized = normalizeWorkspaceInitCommand({ value: args.command });
+  const maxLength = args.maxLength ?? 96;
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}...`;
 }
 
 function incrementWorkspaceSnapshotVersion(state: Pick<AppState, "workspaceSnapshotVersion">) {
@@ -1008,7 +1037,7 @@ export const useAppStore = create<AppState>()(
           projectFiles: root.files,
         }));
       },
-      createWorkspace: async ({ name, mode, fromBranch }) => {
+      createWorkspace: async ({ name, mode, fromBranch, initCommand }) => {
         const trimmed = name.trim();
         if (!trimmed) {
           return { ok: false, message: "Workspace name is required." };
@@ -1046,6 +1075,9 @@ export const useAppStore = create<AppState>()(
         if (!branchName) {
           return { ok: false, message: "Workspace branch name is invalid." };
         }
+        const workspaceInitCommand = normalizeWorkspaceInitCommand({
+          value: initCommand ?? current.settings.newWorkspaceInitCommand,
+        });
         const baseBranch = (fromBranch?.trim() || current.defaultBranch || "main").replace(/^origin\//, "");
         const workspacePath = `${current.projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: branchName })}`;
         const runner = window.api?.terminal?.runCommand;
@@ -1091,14 +1123,50 @@ export const useAppStore = create<AppState>()(
         const workspaceState = buildWorkspaceSessionState({ snapshot });
 
         let files = current.projectFiles;
+        let initNotice: { message: string; noticeLevel: "success" | "warning" } | undefined;
         try {
           await workspaceFsAdapter.setRoot?.({
             rootPath: workspacePath,
             rootName: branchName,
           });
-          files = await workspaceFsAdapter.listFiles();
         } catch {
           // Worktree may be created successfully before filesystem bridge catches up.
+          // Keep workspace registration and use the existing file list as fallback.
+        }
+
+        if (workspaceInitCommand) {
+          const summarizedCommand = summarizeWorkspaceInitCommand({ command: workspaceInitCommand });
+          if (!runner) {
+            initNotice = {
+              noticeLevel: "warning",
+              message: `Workspace created, but the post-create command could not run because the terminal bridge is unavailable: ${summarizedCommand}`,
+            };
+          } else {
+            const initResult = await runner({
+              cwd: workspacePath,
+              command: workspaceInitCommand,
+            });
+            if (initResult.ok) {
+              initNotice = {
+                noticeLevel: "success",
+                message: `Workspace created and ran the post-create command: ${summarizedCommand}`,
+              };
+            } else {
+              initNotice = {
+                noticeLevel: "warning",
+                message: `Workspace created, but the post-create command failed: ${summarizedCommand}. ${summarizeTerminalCommandDetail({
+                  stderr: initResult.stderr,
+                  stdout: initResult.stdout,
+                  fallback: "Command failed.",
+                })}`,
+              };
+            }
+          }
+        }
+
+        try {
+          files = await workspaceFsAdapter.listFiles();
+        } catch {
           // Keep workspace registration and use the existing file list as fallback.
         }
 
@@ -1123,7 +1191,9 @@ export const useAppStore = create<AppState>()(
           ...workspaceState,
           projectFiles: files,
         }));
-        return { ok: true };
+        return initNotice
+          ? { ok: true, ...initNotice }
+          : { ok: true };
       },
       deleteWorkspace: async ({ workspaceId }) => {
         const state = get();
