@@ -17,6 +17,7 @@ If no local overlay exists, load and prioritize user's `AGENTS.md` as the primar
 Use `$stave-patch-release` only for explicit Stave release requests. This includes requests to ship or publish a release, bump the app version, generate release notes or changelog entries for a release, create or move a semver release tag, or repair an already-created release.
 
 Both Codex and Claude should treat the literal token `$stave-patch-release` as an explicit release trigger.
+The repository-local copy of this skill lives at `skills/stave-patch-release/SKILL.md`.
 
 - Use `$stave-patch-release`.
 - Generate or refresh `CHANGELOG.md` with `bunx --bun conventional-changelog-cli -p conventionalcommits -i CHANGELOG.md -s` instead of hand-writing release sections.
