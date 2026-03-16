@@ -1,4 +1,4 @@
-import { PromptInput, PromptSuggestion, PromptSuggestions } from "@/components/ai-elements";
+import { PromptInput, Suggestion, Suggestions } from "@/components/ai-elements";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ModelSelectorOption } from "@/components/ai-elements/model-selector";
 import {
@@ -122,17 +122,21 @@ const ChatInputSuggestions = memo(function ChatInputSuggestions(args: ChatInputS
   }
 
   return (
-    <PromptSuggestions>
-      {promptSuggestions.map((suggestion) => (
-        <PromptSuggestion
-          key={suggestion}
-          onClick={() => args.onSelectSuggestion(suggestion)}
-          title={suggestion}
-        >
-          {suggestion}
-        </PromptSuggestion>
-      ))}
-    </PromptSuggestions>
+    <div className="mb-4">
+      <p className="mb-2 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+        Suggestions
+      </p>
+      <Suggestions aria-label="Suggestions">
+        {promptSuggestions.map((suggestion) => (
+          <Suggestion
+            key={suggestion}
+            onClick={args.onSelectSuggestion}
+            suggestion={suggestion}
+            title={suggestion}
+          />
+        ))}
+      </Suggestions>
+    </div>
   );
 });
 

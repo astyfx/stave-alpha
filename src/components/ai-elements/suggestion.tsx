@@ -1,28 +1,60 @@
-import type { ButtonHTMLAttributes, HTMLAttributes } from "react";
+import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
+import { useCallback } from "react";
+import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
-type PromptSuggestionsProps = HTMLAttributes<HTMLDivElement>;
+type SuggestionsProps = HTMLAttributes<HTMLDivElement>;
 
-export function PromptSuggestions({ className, ...props }: PromptSuggestionsProps) {
+export function Suggestions({ className, ...props }: SuggestionsProps) {
   return (
     <div
-      className={cn("mb-3 flex flex-wrap gap-2", className)}
-      {...props}
-    />
-  );
-}
-
-type PromptSuggestionProps = ButtonHTMLAttributes<HTMLButtonElement>;
-
-export function PromptSuggestion({ className, type = "button", ...props }: PromptSuggestionProps) {
-  return (
-    <button
-      type={type}
       className={cn(
-        "inline-flex max-w-full items-center rounded-full border border-border/80 bg-secondary/60 px-3 py-1.5 text-sm text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+        "mb-3 flex flex-wrap items-center gap-2 overflow-x-auto pb-1",
         className,
       )}
       {...props}
     />
   );
 }
+
+type SuggestionButtonProps = Omit<ComponentProps<typeof Button>, "children" | "onClick">;
+
+interface SuggestionProps extends SuggestionButtonProps {
+  suggestion: string;
+  children?: ReactNode;
+  onClick?: (suggestion: string) => void;
+}
+
+export function Suggestion({
+  suggestion,
+  children,
+  className,
+  onClick,
+  type = "button",
+  variant = "outline",
+  size = "sm",
+  ...props
+}: SuggestionProps) {
+  const handleClick = useCallback(() => {
+    onClick?.(suggestion);
+  }, [onClick, suggestion]);
+
+  return (
+    <Button
+      type={type}
+      variant={variant}
+      size={size}
+      className={cn(
+        "max-w-full cursor-pointer rounded-full px-4 text-left",
+        className,
+      )}
+      onClick={handleClick}
+      {...props}
+    >
+      {children ?? suggestion}
+    </Button>
+  );
+}
+
+export const PromptSuggestions = Suggestions;
+export const PromptSuggestion = Suggestion;
