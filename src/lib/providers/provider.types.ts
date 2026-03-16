@@ -64,6 +64,7 @@ export type NormalizedProviderEvent =
   }
   | { type: "prompt_suggestions"; suggestions: string[] }
   | { type: "tool"; toolUseId?: string; toolName: string; input: string; output?: string; state: ToolUsePart["state"] }
+  | { type: "tool_progress"; toolUseId: string; toolName: string; elapsedSeconds: number }
   | { type: "tool_result"; tool_use_id: string; output: string; isError?: boolean; isPartial?: boolean }
   | { type: "diff"; filePath: string; oldContent: string; newContent: string; status?: CodeDiffPart["status"] }
   | { type: "approval"; toolName: string; requestId: string; description: string }

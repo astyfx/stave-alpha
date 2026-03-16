@@ -83,6 +83,7 @@ export type BridgeEvent =
       multiSelect?: boolean;
     }>;
   }
+  | { type: "tool_progress"; toolUseId: string; toolName: string; elapsedSeconds: number }
   | { type: "plan_ready"; planText: string }
   | { type: "system"; content: string }
   | { type: "error"; message: string; recoverable: boolean }

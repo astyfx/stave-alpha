@@ -32,6 +32,7 @@ export interface ToolUsePart extends MessagePartBase {
   input: string;
   output?: string;
   state: "input-streaming" | "input-available" | "output-available" | "output-error";
+  elapsedSeconds?: number;
 }
 
 export interface CodeDiffPart extends MessagePartBase {

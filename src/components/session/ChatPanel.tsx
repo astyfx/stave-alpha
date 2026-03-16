@@ -398,7 +398,7 @@ function MessagePartRenderer(args: { part: MessagePart; taskId: string; messageI
           defaultOpen={shouldAutoOpenToolPart(part.state)}
           openWhen={shouldAutoOpenToolPart(part.state)}
         >
-          <ToolHeader type={part.toolName} state={part.state} />
+          <ToolHeader type={part.toolName} state={part.state} elapsedSeconds={part.elapsedSeconds} />
           <ToolContent>
             <ToolInput input={part.input} />
             {(part.state !== "input-streaming" || part.output?.trim()) && (

@@ -14,6 +14,7 @@ interface ToolHeaderProps extends HTMLAttributes<HTMLButtonElement> {
   type?: string;
   state?: ToolState;
   title?: string;
+  elapsedSeconds?: number;
 }
 
 interface ToolContextValue {
@@ -94,14 +95,27 @@ export function getStatusBadge(state?: ToolHeaderProps["state"]): ReactNode {
   }
 }
 
-function getToolStatusText(state?: ToolState) {
+function formatElapsedTime(seconds: number) {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remaining = Math.round(seconds % 60);
+  return remaining > 0 ? `${minutes}m ${remaining}s` : `${minutes}m`;
+}
+
+function getToolStatusText(state?: ToolState, elapsedSeconds?: number) {
   switch (state) {
     case "input-streaming":
-      return "Running";
+      return elapsedSeconds != null && elapsedSeconds > 0
+        ? `Running (${formatElapsedTime(elapsedSeconds)})`
+        : "Running";
     case "input-available":
       return "Ready";
     case "output-available":
-      return "Done";
+      return elapsedSeconds != null && elapsedSeconds > 0
+        ? `Done (${formatElapsedTime(elapsedSeconds)})`
+        : "Done";
     case "output-error":
       return "Error";
     default:
@@ -120,7 +134,7 @@ function getToolStatusTextClassName(state?: ToolState) {
   }
 }
 
-export function ToolHeader({ className, type, state, title, ...props }: ToolHeaderProps) {
+export function ToolHeader({ className, type, state, title, elapsedSeconds, ...props }: ToolHeaderProps) {
   const { open, setOpen } = useToolContext();
   return (
     <button
@@ -135,7 +149,7 @@ export function ToolHeader({ className, type, state, title, ...props }: ToolHead
       </span>
       <span className="inline-flex items-center gap-2">
         <span className={cn("text-xs font-medium", getToolStatusTextClassName(state))}>
-          {getToolStatusText(state)}
+          {getToolStatusText(state, elapsedSeconds)}
         </span>
         {getStatusBadge(state)}
         <ChevronDown className={cn("size-3.5 transition-transform", open ? "rotate-180" : "rotate-0")} />

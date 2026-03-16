@@ -142,6 +142,7 @@ function normalizeEventToPart(args: { event: NormalizedProviderEvent }): Message
         type: "system_event",
         content: `[error] ${event.message}`,
       };
+    case "tool_progress":
     case "tool_result":
     case "usage":
     case "prompt_suggestions":
@@ -215,6 +216,17 @@ export function appendProviderEventToAssistant(args: {
         incoming: args.event.suggestions,
       }),
     };
+  }
+
+  if (args.event.type === "tool_progress") {
+    const { toolUseId, elapsedSeconds } = args.event;
+    const updatedParts = args.message.parts.map((part) => {
+      if (part.type === "tool_use" && part.toolUseId === toolUseId) {
+        return { ...part, elapsedSeconds };
+      }
+      return part;
+    });
+    return { ...args.message, parts: updatedParts };
   }
 
   if (args.event.type === "tool_result") {

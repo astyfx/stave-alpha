@@ -55,6 +55,13 @@ const ToolResultEventSchema = z.object({
   isPartial: z.boolean().optional(),
 });
 
+const ToolProgressEventSchema = z.object({
+  type: z.literal("tool_progress"),
+  toolUseId: z.string(),
+  toolName: z.string(),
+  elapsedSeconds: z.number(),
+});
+
 const DiffStatusSchema = z.union([
   z.literal("pending"),
   z.literal("accepted"),
@@ -121,6 +128,7 @@ export const NormalizedProviderEventSchema = z.discriminatedUnion("type", [
   UsageEventSchema,
   PromptSuggestionsEventSchema,
   ToolEventSchema,
+  ToolProgressEventSchema,
   ToolResultEventSchema,
   DiffEventSchema,
   ApprovalEventSchema,

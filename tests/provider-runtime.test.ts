@@ -154,6 +154,20 @@ describe("parseNormalizedEvent", () => {
     expect(parsed?.type).toBe("tool_result");
   });
 
+  test("accepts valid tool_progress event", () => {
+    const parsed = parseNormalizedEvent({
+      payload: {
+        type: "tool_progress",
+        toolUseId: "tool-abc",
+        toolName: "Bash",
+        elapsedSeconds: 15,
+      },
+    });
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("tool_progress");
+  });
+
   test("rejects invalid event", () => {
     const parsed = parseNormalizedEvent({ payload: { type: "tool", state: "bad" } });
     expect(parsed).toBeNull();

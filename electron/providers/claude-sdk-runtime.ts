@@ -508,6 +508,18 @@ export function mapClaudeMessageToEvents(args: {
         nativeConversationId: sysMsg.session_id,
       }];
     }
+    if (sysMsg.subtype === "compact_boundary") {
+      const meta = (sysMsg as { compact_metadata?: { trigger?: string } }).compact_metadata;
+      const trigger = meta?.trigger ?? "auto";
+      return [{ type: "system", content: `Context compacted (${trigger}).` }];
+    }
+    if (sysMsg.subtype === "status") {
+      const status = (sysMsg as { status?: string | null }).status;
+      if (status === "compacting") {
+        return [{ type: "system", content: "Compacting conversation context\u2026" }];
+      }
+      return [];
+    }
     const taskProgressEvents = buildClaudeTaskProgressEvents(sysMsg);
     if (taskProgressEvents.length > 0) {
       return taskProgressEvents;
@@ -700,6 +712,25 @@ export function mapClaudeMessageToEvents(args: {
       return [{
         type: "system",
         content: `Approaching rate limit${pct}. Consider pacing requests.`,
+      }];
+    }
+    return [];
+  }
+
+  if (message.type === "tool_progress") {
+    const progressMsg = message as {
+      type: "tool_progress";
+      tool_use_id?: string;
+      tool_name?: string;
+      elapsed_time_seconds?: number;
+    };
+    const toolUseId = progressMsg.tool_use_id;
+    if (typeof toolUseId === "string" && toolUseId) {
+      return [{
+        type: "tool_progress",
+        toolUseId,
+        toolName: progressMsg.tool_name ?? "tool",
+        elapsedSeconds: progressMsg.elapsed_time_seconds ?? 0,
       }];
     }
     return [];

@@ -61,6 +61,89 @@ describe("mapClaudeMessageToEvents", () => {
       { type: "system", content: "Subagent progress: Analyzing authentication module" },
     ]);
   });
+
+  test("surfaces compact_boundary as a system event", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "manual", pre_tokens: 50000 },
+        uuid: "msg-compact-1",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([
+      { type: "system", content: "Context compacted (manual)." },
+    ]);
+  });
+
+  test("surfaces compact_boundary with auto trigger", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "auto", pre_tokens: 80000 },
+        uuid: "msg-compact-2",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([
+      { type: "system", content: "Context compacted (auto)." },
+    ]);
+  });
+
+  test("surfaces compacting status as a system event", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "system",
+        subtype: "status",
+        status: "compacting",
+        uuid: "msg-status-1",
+        session_id: "session-1",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([
+      { type: "system", content: "Compacting conversation context\u2026" },
+    ]);
+  });
+
+  test("ignores null status messages", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "system",
+        subtype: "status",
+        status: null,
+        uuid: "msg-status-2",
+        session_id: "session-1",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([]);
+  });
+
+  test("surfaces tool_progress as a tool_progress event", () => {
+    const events = mapClaudeMessageToEvents({
+      message: {
+        type: "tool_progress",
+        tool_use_id: "tool-abc",
+        tool_name: "Bash",
+        parent_tool_use_id: null,
+        elapsed_time_seconds: 15,
+        uuid: "msg-tp-1",
+        session_id: "session-1",
+      } as never,
+      claudeDebugStream: false,
+    });
+
+    expect(events).toEqual([
+      { type: "tool_progress", toolUseId: "tool-abc", toolName: "Bash", elapsedSeconds: 15 },
+    ]);
+  });
 });
 
 describe("buildClaudeApprovalPermissionResult", () => {
