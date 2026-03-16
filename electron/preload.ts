@@ -264,4 +264,7 @@ contextBridge.exposeInMainWorld("api", {
   shell: {
     openExternal: (args: { url: string }) => ipcRenderer.invoke("shell:open-external", args),
   },
+  capture: {
+    screenshot: () => ipcRenderer.invoke("screenshot:capture") as Promise<{ ok: boolean; dataUrl: string }>,
+  },
 });

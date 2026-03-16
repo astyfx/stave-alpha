@@ -1,5 +1,5 @@
 import type { TaskProviderConversationState } from "@/lib/db/workspaces.db";
-import type { ChatMessage, Task } from "@/types/chat";
+import type { Attachment, ChatMessage, Task } from "@/types/chat";
 import {
   interruptActiveTaskTurns,
   persistWorkspaceSnapshot,
@@ -27,7 +27,7 @@ export async function interruptWorkspaceTurnsBeforeTransition(args: {
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
-  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[] }>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>;
   activeTurnIdsByTask: Record<string, string | undefined>;
   providerConversationByTask: Record<string, TaskProviderConversationState>;
   workspaceName: string;

@@ -209,6 +209,7 @@ describe("workspace snapshot schema compatibility", () => {
     expect(loaded?.promptDraftByTask["task-1"]).toEqual({
       text: "draft only",
       attachedFilePaths: [],
+      attachments: [],
     });
     expect(loaded?.providerConversationByTask).toEqual({});
   });

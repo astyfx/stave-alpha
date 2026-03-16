@@ -1,4 +1,4 @@
-import type { ChatMessage, FileContextPart, MessagePart } from "@/types/chat";
+import type { ChatMessage, FileContextPart, ImageContextPart, MessagePart } from "@/types/chat";
 import {
   sanitizeChatMessagePayload,
   sanitizeFileContextPayload,
@@ -22,6 +22,8 @@ function cloneMessagePart(part: MessagePart): MessagePart {
       return { ...part };
     case "file_context":
       return { ...part };
+    case "image_context":
+      return { ...part };
     case "approval":
       return { ...part };
     case "user_input":
@@ -38,8 +40,11 @@ function cloneMessagePart(part: MessagePart): MessagePart {
   }
 }
 
-function cloneContextPart(part: FileContextPart | CanonicalRetrievedContextPart) {
+function cloneContextPart(part: FileContextPart | CanonicalRetrievedContextPart | ImageContextPart) {
   if (part.type === "retrieved_context") {
+    return { ...part };
+  }
+  if (part.type === "image_context") {
     return { ...part };
   }
   return sanitizeFileContextPayload({ ...part });
@@ -76,6 +81,11 @@ export function buildCanonicalConversationRequest(args: {
     language: string;
     instruction?: string;
   }>;
+  imageContexts?: Array<{
+    dataUrl: string;
+    label: string;
+    mimeType: string;
+  }>;
   nativeConversationId?: string | null;
   retrievedContextParts?: CanonicalRetrievedContextPart[];
 }): CanonicalConversationRequest {
@@ -89,6 +99,16 @@ export function buildCanonicalConversationRequest(args: {
         language: fc.language,
         instruction: fc.instruction,
       }));
+    }
+  }
+  if (args.imageContexts) {
+    for (const ic of args.imageContexts) {
+      contextParts.push({
+        type: "image_context",
+        dataUrl: ic.dataUrl,
+        label: ic.label,
+        mimeType: ic.mimeType,
+      });
     }
   }
   args.retrievedContextParts?.forEach((part) => {
@@ -133,6 +153,8 @@ function canonicalPartToContextText(part: CanonicalConversationMessage["parts"][
       return `[diff:${part.filePath}] status=${part.status}`;
     case "file_context":
       return `[file_context:${part.filePath}] ${part.instruction ?? ""}`.trim();
+    case "image_context":
+      return `[image: ${part.label}]`;
     case "approval":
       return `[approval:${part.toolName}] ${part.description} state=${part.state}`;
     case "user_input":
@@ -179,6 +201,15 @@ export function buildLegacyPromptFromCanonicalRequest(args: {
         `language: ${part.language}`,
         part.instruction ? `instruction: ${part.instruction}` : "instruction: (none)",
         part.content,
+      );
+      return;
+    }
+
+    if (part.type === "image_context") {
+      sections.push(
+        "[Image Attachment]",
+        `label: ${part.label}`,
+        `type: ${part.mimeType}`,
       );
       return;
     }

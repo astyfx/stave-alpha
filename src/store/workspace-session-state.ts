@@ -2,7 +2,7 @@ import { type PersistedTurnSummary } from "@/lib/db/turns.db";
 import { type TaskProviderConversationState, type WorkspaceSnapshot, upsertWorkspace } from "@/lib/db/workspaces.db";
 import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
 import { CURRENT_WORKSPACE_SNAPSHOT_VERSION } from "@/lib/task-context/workspace-snapshot";
-import type { ChatMessage, Task } from "@/types/chat";
+import type { Attachment, ChatMessage, Task } from "@/types/chat";
 
 export const starterWorkspaceId = "base";
 export const defaultWorkspaceName = "Default Workspace";
@@ -13,7 +13,7 @@ export interface WorkspaceSessionState {
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
-  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[] }>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>;
   activeTurnIdsByTask: Record<string, string | undefined>;
   providerConversationByTask: Record<string, TaskProviderConversationState>;
   nativeConversationReadyByTask: Record<string, boolean>;
@@ -24,7 +24,7 @@ export function createEmptyWorkspaceState() {
     activeTaskId: "",
     tasks: [] as Task[],
     messagesByTask: {} as Record<string, ChatMessage[]>,
-    promptDraftByTask: {} as Record<string, { text: string; attachedFilePaths: string[] }>,
+    promptDraftByTask: {} as Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>,
     providerConversationByTask: {} as Record<string, TaskProviderConversationState>,
   };
 }
@@ -205,7 +205,7 @@ export function createWorkspaceSnapshot(args: {
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
-  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[] }>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>;
   providerConversationByTask: Record<string, TaskProviderConversationState>;
 }) {
   return {
@@ -224,7 +224,7 @@ export async function persistWorkspaceSnapshot(args: {
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
-  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[] }>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>;
   providerConversationByTask: Record<string, TaskProviderConversationState>;
 }) {
   await upsertWorkspace({

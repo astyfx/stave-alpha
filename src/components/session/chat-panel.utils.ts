@@ -1,4 +1,4 @@
-import type { ChatMessage, CodeDiffPart, FileContextPart, MessagePart, ToolUsePart } from "@/types/chat";
+import type { ChatMessage, CodeDiffPart, FileContextPart, ImageContextPart, MessagePart, ToolUsePart } from "@/types/chat";
 
 export function isPendingDiffStatus(status: CodeDiffPart["status"]) {
   return status === "pending";
@@ -13,6 +13,7 @@ export type MessagePartSegment =
   | { kind: "tools"; parts: MessagePart[]; startIndex: number }
   | { kind: "diffs"; parts: CodeDiffPart[]; startIndex: number }
   | { kind: "file_contexts"; parts: FileContextPart[]; startIndex: number }
+  | { kind: "image_contexts"; parts: ImageContextPart[]; startIndex: number }
   | { kind: "other"; part: MessagePart; index: number };
 
 function isSubagentToolPart(args: { toolName: string }) {
@@ -134,6 +135,17 @@ export function groupMessageParts(parts: MessagePart[]): MessagePartSegment[] {
       continue;
     }
 
+    if (currentPart?.type === "image_context") {
+      const group: ImageContextPart[] = [];
+      const startIndex = index;
+      while (index < parts.length && parts[index]?.type === "image_context") {
+        group.push(parts[index] as ImageContextPart);
+        index += 1;
+      }
+      segments.push({ kind: "image_contexts", parts: group, startIndex });
+      continue;
+    }
+
     segments.push({ kind: "other", part: currentPart!, index });
     index += 1;
   }
@@ -174,6 +186,8 @@ function getMessagePartScrollFingerprint(part: MessagePart): string {
       return `diff:${part.filePath}:${part.status}:${part.oldContent.length}:${part.newContent.length}`;
     case "file_context":
       return `file:${part.filePath}:${part.content.length}:${part.instruction?.length ?? 0}`;
+    case "image_context":
+      return `image:${part.label}`;
     case "approval":
       return `approval:${part.toolName}:${part.state}:${part.description.length}`;
     case "user_input":

@@ -1,4 +1,4 @@
-const CURRENT_WORKSPACE_SNAPSHOT_VERSION = 3;
+const CURRENT_WORKSPACE_SNAPSHOT_VERSION = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -66,9 +66,31 @@ export function migrateWorkspaceSnapshotPayload(args: { payload: unknown }): unk
     return args.payload;
   }
 
-  return {
+  const migrated: Record<string, unknown> = {
     ...args.payload,
     version: CURRENT_WORKSPACE_SNAPSHOT_VERSION,
     providerConversationByTask: migrateProviderConversationByTask(args.payload.providerConversationByTask),
   };
+
+  // v3 → v4: populate attachments from attachedFilePaths
+  if (version < 4 && isRecord(migrated.promptDraftByTask)) {
+    const nextDrafts: Record<string, unknown> = {};
+    for (const [taskId, rawDraft] of Object.entries(migrated.promptDraftByTask as Record<string, unknown>)) {
+      if (!isRecord(rawDraft)) {
+        nextDrafts[taskId] = rawDraft;
+        continue;
+      }
+      const filePaths = Array.isArray(rawDraft.attachedFilePaths) ? rawDraft.attachedFilePaths : [];
+      nextDrafts[taskId] = {
+        ...rawDraft,
+        attachments: (rawDraft.attachments as unknown[]) ?? filePaths.map((fp: unknown) => ({
+          kind: "file",
+          filePath: String(fp),
+        })),
+      };
+    }
+    migrated.promptDraftByTask = nextDrafts;
+  }
+
+  return migrated;
 }

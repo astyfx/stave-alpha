@@ -6,9 +6,14 @@ export type MessagePartType =
   | "tool_use"
   | "code_diff"
   | "file_context"
+  | "image_context"
   | "approval"
   | "user_input"
   | "system_event";
+
+export type Attachment =
+  | { kind: "file"; filePath: string }
+  | { kind: "image"; id: string; dataUrl: string; label: string };
 
 export interface MessagePartBase {
   type: MessagePartType;
@@ -80,6 +85,13 @@ export interface UserInputPart extends MessagePartBase {
   state: "input-requested" | "input-responded" | "input-denied";
 }
 
+export interface ImageContextPart extends MessagePartBase {
+  type: "image_context";
+  dataUrl: string;
+  label: string;
+  mimeType: string;
+}
+
 export interface SystemEventPart extends MessagePartBase {
   type: "system_event";
   content: string;
@@ -91,6 +103,7 @@ export type MessagePart =
   | ToolUsePart
   | CodeDiffPart
   | FileContextPart
+  | ImageContextPart
   | ApprovalPart
   | UserInputPart
   | SystemEventPart;

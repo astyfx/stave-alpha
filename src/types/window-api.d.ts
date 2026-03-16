@@ -461,6 +461,10 @@ interface WindowPersistenceApi {
   }>;
 }
 
+interface WindowCaptureApi {
+  screenshot: () => Promise<{ ok: boolean; dataUrl: string }>;
+}
+
 interface WindowApi {
   provider?: WindowProviderApi;
   persistence?: WindowPersistenceApi;
@@ -468,6 +472,7 @@ interface WindowApi {
   lsp?: WindowLspApi;
   terminal?: WindowTerminalApi;
   sourceControl?: WindowSourceControlApi;
+  capture?: WindowCaptureApi;
   window?: {
     minimize?: () => Promise<void>;
     toggleMaximize?: () => Promise<{ isMaximized: boolean }>;

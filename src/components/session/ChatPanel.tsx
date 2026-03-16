@@ -55,7 +55,7 @@ import { copyTextToClipboard } from "@/lib/clipboard";
 import { formatTaskUpdatedAt } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
-import type { ChatMessage, CodeDiffPart, FileContextPart, MessagePart } from "@/types/chat";
+import type { ChatMessage, CodeDiffPart, FileContextPart, ImageContextPart, MessagePart } from "@/types/chat";
 import { SessionReplayDrawer, type SessionReplayRequestContext } from "@/components/session/SessionReplayDrawer";
 import { useShallow } from "zustand/react/shallow";
 
@@ -368,6 +368,59 @@ function ReferencedFilesBlock(args: { parts: FileContextPart[] }) {
   );
 }
 
+function ImageAttachmentBlock(args: { parts: ImageContextPart[] }) {
+  const [previewSrc, setPreviewSrc] = useState<{ dataUrl: string; label: string } | null>(null);
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-2">
+        {args.parts.map((part, index) => (
+          <div key={index} className="overflow-hidden rounded-md border border-border/80">
+            <img
+              src={part.dataUrl}
+              alt={part.label}
+              className="max-h-48 cursor-zoom-in object-contain"
+              title="Click to view full size"
+              onClick={() => setPreviewSrc({ dataUrl: part.dataUrl, label: part.label })}
+            />
+            <p className="border-t border-border/60 bg-muted/30 px-2 py-1 text-xs text-muted-foreground">{part.label}</p>
+          </div>
+        ))}
+      </div>
+      {previewSrc ? (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-overlay p-6 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Image full screen preview"
+          onClick={() => setPreviewSrc(null)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 rounded-sm border border-border/80 bg-card/90 px-2 py-1 text-sm text-foreground hover:bg-accent"
+            onClick={(event) => {
+              event.stopPropagation();
+              setPreviewSrc(null);
+            }}
+          >
+            Close
+          </button>
+          <img
+            src={previewSrc.dataUrl}
+            alt={previewSrc.label}
+            className="max-h-full max-w-full cursor-zoom-out object-contain"
+            title="Click to close"
+            onClick={(event) => {
+              event.stopPropagation();
+              setPreviewSrc(null);
+            }}
+          />
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function MessagePartRenderer(args: { part: MessagePart; taskId: string; messageId: string; isStreaming?: boolean; isLastTextPart?: boolean }) {
   const { part, taskId, messageId, isStreaming, isLastTextPart } = args;
   const resolveApproval = useAppStore((state) => state.resolveApproval);
@@ -417,6 +470,8 @@ function MessagePartRenderer(args: { part: MessagePart; taskId: string; messageI
       return <ChangedFilesBlock parts={[part]} taskId={taskId} messageId={messageId} startIndex={0} />;
     case "file_context":
       return <ReferencedFilesBlock parts={[part]} />;
+    case "image_context":
+      return <ImageAttachmentBlock parts={[part]} />;
     case "approval":
       return (
         <ConfirmationCompact
@@ -661,6 +716,13 @@ function MessageBody(args: {
           return (
             <div key={`${messageId}-file-contexts-${segment.startIndex}`} className="mt-2 first:mt-0">
               <ReferencedFilesBlock parts={segment.parts} />
+            </div>
+          );
+        }
+        if (segment.kind === "image_contexts") {
+          return (
+            <div key={`${messageId}-image-contexts-${segment.startIndex}`} className="mt-2 first:mt-0">
+              <ImageAttachmentBlock parts={segment.parts} />
             </div>
           );
         }

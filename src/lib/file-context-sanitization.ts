@@ -109,6 +109,15 @@ export function sanitizeMessagePartPayload<T extends MessagePart>(part: T): T {
     }
     case "file_context":
       return sanitizeFileContextPayload(part) as T;
+    case "image_context": {
+      if (part.dataUrl.length <= MAX_PROVIDER_TEXT_FIELD_CHARS) {
+        return part;
+      }
+      return {
+        ...part,
+        dataUrl: "",
+      } as T;
+    }
     case "system_event": {
       const content = sanitizeTextField({ value: part.content, label: "system event" });
       return content === part.content ? part : { ...part, content } as T;

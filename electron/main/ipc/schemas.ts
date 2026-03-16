@@ -111,6 +111,12 @@ const CanonicalMessagePartSchema = z.discriminatedUnion("type", [
     ]),
   }).strict(),
   z.object({
+    type: z.literal("image_context"),
+    dataUrl: z.string().max(10_000_000),
+    label: z.string().max(500),
+    mimeType: z.string().max(200),
+  }).strict(),
+  z.object({
     type: z.literal("system_event"),
     content: z.string().max(500_000),
   }).strict(),
@@ -123,6 +129,12 @@ const CanonicalContextPartSchema = z.discriminatedUnion("type", [
     content: z.string().max(500_000),
     language: z.string().max(200),
     instruction: z.string().max(5000).optional(),
+  }).strict(),
+  z.object({
+    type: z.literal("image_context"),
+    dataUrl: z.string().max(10_000_000),
+    label: z.string().max(500),
+    mimeType: z.string().max(200),
   }).strict(),
   z.object({
     type: z.literal("retrieved_context"),

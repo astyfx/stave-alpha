@@ -76,6 +76,13 @@ const UserInputPartSchema = z.object({
   ]),
 });
 
+const ImageContextPartSchema = z.object({
+  type: z.literal("image_context"),
+  dataUrl: z.string(),
+  label: z.string(),
+  mimeType: z.string(),
+});
+
 const SystemEventPartSchema = z.object({
   type: z.literal("system_event"),
   content: z.string(),
@@ -87,9 +94,15 @@ const MessagePartSchema = z.discriminatedUnion("type", [
   ToolUsePartSchema,
   CodeDiffPartSchema,
   FileContextPartSchema,
+  ImageContextPartSchema,
   ApprovalPartSchema,
   UserInputPartSchema,
   SystemEventPartSchema,
+]);
+
+const AttachmentSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("file"), filePath: z.string() }),
+  z.object({ kind: z.literal("image"), id: z.string(), dataUrl: z.string(), label: z.string() }),
 ]);
 
 const ChatMessageSchema = z.object({
@@ -135,11 +148,13 @@ export const WorkspaceSnapshotSchema = z.object({
     text: z.string(),
     attachedFilePaths: z.array(z.string()).optional().default([]),
     attachedFilePath: z.string().optional(),
+    attachments: z.array(AttachmentSchema).optional().default([]),
   }).transform((draft) => ({
     text: draft.text,
     attachedFilePaths: draft.attachedFilePaths.length > 0
       ? draft.attachedFilePaths
       : (draft.attachedFilePath ? [draft.attachedFilePath] : []),
+    attachments: draft.attachments,
   }))).optional().default({}),
   providerConversationByTask: z.record(z.string(), TaskProviderConversationStateSchema).optional().default({}),
 });

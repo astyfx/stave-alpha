@@ -24,7 +24,7 @@ import {
 } from "@/lib/providers/model-catalog";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
-import type { ChatMessage } from "@/types/chat";
+import type { Attachment, ChatMessage } from "@/types/chat";
 import { useShallow } from "zustand/react/shallow";
 import { getLatestPromptSuggestions, mergePromptSuggestionWithDraft } from "./chat-input.utils";
 
@@ -32,7 +32,7 @@ interface ChatInputProps {
   compact?: boolean;
 }
 
-const EMPTY_PROMPT_DRAFT = { text: "", attachedFilePaths: [] as string[] };
+const EMPTY_PROMPT_DRAFT = { text: "", attachedFilePaths: [] as string[], attachments: [] as Attachment[] };
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const PROMPT_DRAFT_SAVE_DELAY_MS = 250;
 const CLAUDE_THINKING_OPTIONS = [
@@ -686,8 +686,28 @@ export function ChatInput(args: ChatInputProps = {}) {
               updateSettings({ patch: { codexApprovalPolicy: value as typeof codexApprovalPolicy } });
             }
           }}
+          attachments={promptDraft.attachments}
           onAttachFilesChange={({ filePaths }) =>
             updatePromptDraft({ taskId: providerSelectionTarget, patch: { attachedFilePaths: filePaths } })}
+          onAttachmentsChange={({ attachments }) =>
+            updatePromptDraft({ taskId: providerSelectionTarget, patch: { attachments } })}
+          onCaptureScreenshot={window.api?.capture?.screenshot ? async () => {
+            const result = await window.api!.capture!.screenshot();
+            if (!result.ok || !result.dataUrl) {
+              return;
+            }
+            const imageAttachment: Attachment = {
+              kind: "image",
+              id: crypto.randomUUID(),
+              dataUrl: result.dataUrl,
+              label: "Screenshot",
+            };
+            const current = useAppStore.getState().promptDraftByTask[providerSelectionTarget]?.attachments ?? [];
+            updatePromptDraft({
+              taskId: providerSelectionTarget,
+              patch: { attachments: [...current, imageAttachment] },
+            });
+          } : undefined}
           onSubmit={async ({ text, filePaths }) => {
             cancelPendingDraftSave();
             for (const fp of filePaths) {
@@ -703,10 +723,19 @@ export function ChatInput(args: ChatInputProps = {}) {
                 content: tab.content,
                 language: tab.language,
               }));
+            const currentAttachments = useAppStore.getState().promptDraftByTask[providerSelectionTarget]?.attachments ?? [];
+            const imageContexts = currentAttachments
+              .filter((a): a is Extract<Attachment, { kind: "image" }> => a.kind === "image")
+              .map((a) => ({
+                dataUrl: a.dataUrl,
+                label: a.label,
+                mimeType: "image/png",
+              }));
             sendUserMessage({
               taskId: activeTaskId,
               content: text,
               fileContexts: fileContexts.length > 0 ? fileContexts : undefined,
+              imageContexts: imageContexts.length > 0 ? imageContexts : undefined,
             });
             clearPromptDraft({ taskId: providerSelectionTarget });
             adoptPromptDraftText({

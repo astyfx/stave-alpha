@@ -29,9 +29,11 @@ import {
   updateUserInputPartsByRequestId,
 } from "@/store/provider-message.utils";
 import type {
+  Attachment,
   ChatMessage,
   EditorTab,
   FileContextPart,
+  ImageContextPart,
   MessagePart,
   Task,
   TextPart,
@@ -235,7 +237,7 @@ interface AppState {
   isDarkMode: boolean;
   activeTaskId: string;
   draftProvider: ProviderId;
-  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[] }>;
+  promptDraftByTask: Record<string, { text: string; attachedFilePaths: string[]; attachments: Attachment[] }>;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
   layout: LayoutState;
@@ -264,7 +266,7 @@ interface AppState {
   updateSettings: (args: { patch: Partial<AppSettings> }) => void;
   selectTask: (args: { taskId: string }) => void;
   clearTaskSelection: () => void;
-  updatePromptDraft: (args: { taskId: string; patch: Partial<{ text: string; attachedFilePaths: string[] }> }) => void;
+  updatePromptDraft: (args: { taskId: string; patch: Partial<{ text: string; attachedFilePaths: string[]; attachments: Attachment[] }> }) => void;
   clearPromptDraft: (args: { taskId: string }) => void;
   createTask: (args: { title?: string }) => void;
   renameTask: (args: { taskId: string; title: string }) => void;
@@ -288,6 +290,11 @@ interface AppState {
       content: string;
       language: string;
       instruction?: string;
+    }>;
+    imageContexts?: Array<{
+      dataUrl: string;
+      label: string;
+      mimeType: string;
     }>;
   }) => void;
   abortTaskTurn: (args: { taskId: string }) => void;
@@ -1387,16 +1394,19 @@ export const useAppStore = create<AppState>()(
       }),
       updatePromptDraft: ({ taskId, patch }) => {
         set((state) => {
-          const currentDraft = state.promptDraftByTask[taskId] ?? { text: "", attachedFilePaths: [] };
+          const currentDraft = state.promptDraftByTask[taskId] ?? { text: "", attachedFilePaths: [], attachments: [] };
           const nextDraft = {
             text: currentDraft.text,
             attachedFilePaths: currentDraft.attachedFilePaths,
+            attachments: currentDraft.attachments,
             ...patch,
           };
           if (
             nextDraft.text === currentDraft.text
             && nextDraft.attachedFilePaths.length === currentDraft.attachedFilePaths.length
             && nextDraft.attachedFilePaths.every((p, i) => p === currentDraft.attachedFilePaths[i])
+            && nextDraft.attachments.length === currentDraft.attachments.length
+            && nextDraft.attachments.every((a, i) => a === currentDraft.attachments[i])
           ) {
             return state;
           }
@@ -1411,14 +1421,14 @@ export const useAppStore = create<AppState>()(
       },
       clearPromptDraft: ({ taskId }) => {
         set((state) => {
-          const currentDraft = state.promptDraftByTask[taskId] ?? { text: "", attachedFilePaths: [] };
-          if (!currentDraft.text && currentDraft.attachedFilePaths.length === 0) {
+          const currentDraft = state.promptDraftByTask[taskId] ?? { text: "", attachedFilePaths: [], attachments: [] };
+          if (!currentDraft.text && currentDraft.attachedFilePaths.length === 0 && currentDraft.attachments.length === 0) {
             return state;
           }
           return {
             promptDraftByTask: {
               ...state.promptDraftByTask,
-              [taskId]: { text: "", attachedFilePaths: [] },
+              [taskId]: { text: "", attachedFilePaths: [], attachments: [] },
             },
             workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
           };
@@ -1735,7 +1745,7 @@ export const useAppStore = create<AppState>()(
           providerAvailability,
         }));
       },
-      sendUserMessage: ({ taskId, content, fileContexts }) => {
+      sendUserMessage: ({ taskId, content, fileContexts, imageContexts }) => {
         const turnId = crypto.randomUUID();
         let state = get();
         let resolvedTaskId = taskId;
@@ -1891,6 +1901,7 @@ export const useAppStore = create<AppState>()(
           userInput: content,
           mode: "chat",
           fileContexts,
+          imageContexts,
           nativeConversationId: providerConversation?.[provider] ?? null,
         });
         const prompt = content;
@@ -1907,6 +1918,16 @@ export const useAppStore = create<AppState>()(
                 language: fc.language,
                 instruction: fc.instruction,
               }));
+            }
+          }
+          if (imageContexts) {
+            for (const ic of imageContexts) {
+              userParts.push({
+                type: "image_context",
+                dataUrl: ic.dataUrl,
+                label: ic.label,
+                mimeType: ic.mimeType,
+              } satisfies ImageContextPart);
             }
           }
           if (content.trim().length > 0) {

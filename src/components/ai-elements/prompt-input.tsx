@@ -1,4 +1,5 @@
-import { Check, FilePlus2, LoaderCircle, OctagonX, Send, SlidersHorizontal, X } from "lucide-react";
+import { Camera, Check, FilePlus2, LoaderCircle, OctagonX, Send, SlidersHorizontal, X } from "lucide-react";
+import type { Attachment } from "@/types/chat";
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Command, CommandEmpty, CommandGroup, CommandItem, CommandList, Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger, Input, Popover, PopoverAnchor, PopoverContent, Textarea } from "@/components/ui";
 import type { CommandPaletteItem, CommandPaletteProviderNote } from "@/lib/commands";
@@ -18,6 +19,7 @@ interface PromptInputProps {
   modelOptions: readonly ModelSelectorOption[];
   projectFiles: string[];
   attachedFilePaths: string[];
+  attachments?: Attachment[];
   permissionMode?: PermissionModeValue;
   runtimeQuickControls?: readonly PromptInputRuntimeControl[];
   runtimeStatusItems?: readonly PromptInputRuntimeStatusItem[];
@@ -26,6 +28,8 @@ interface PromptInputProps {
   onValueChange: (value: string) => void;
   onModelSelect: (args: { selection: ModelSelectorOption }) => void;
   onAttachFilesChange: (args: { filePaths: string[] }) => void;
+  onAttachmentsChange?: (args: { attachments: Attachment[] }) => void;
+  onCaptureScreenshot?: () => void;
   onPermissionModeChange?: (value: PermissionModeValue) => void;
   onSubmit: (args: { text: string; filePaths: string[] }) => void | Promise<void>;
   onAbort?: () => void;
@@ -41,6 +45,7 @@ export function PromptInput(args: PromptInputProps) {
     modelOptions,
     projectFiles,
     attachedFilePaths,
+    attachments,
     permissionMode,
     runtimeQuickControls,
     runtimeStatusItems,
@@ -49,10 +54,18 @@ export function PromptInput(args: PromptInputProps) {
     onValueChange,
     onModelSelect,
     onAttachFilesChange,
+    onAttachmentsChange,
+    onCaptureScreenshot,
     onPermissionModeChange,
     onSubmit,
     onAbort,
   } = args;
+  const imageAttachments = useMemo(
+    () => (attachments ?? []).filter((a): a is Extract<Attachment, { kind: "image" }> => a.kind === "image"),
+    [attachments],
+  );
+  const screenshotAvailable = Boolean(onCaptureScreenshot);
+  const [imagePreviewSrc, setImagePreviewSrc] = useState<{ dataUrl: string; label: string } | null>(null);
   const [attachOpen, setAttachOpen] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
   const [dismissedCommandQuery, setDismissedCommandQuery] = useState<string | null>(null);
@@ -177,6 +190,7 @@ export function PromptInput(args: PromptInputProps) {
   }
 
   return (
+    <>
     <form data-prompt-input-root onSubmit={handleSubmit} className="space-y-3 rounded-xl border border-border/80 bg-card p-4">
       <Popover open={commandPaletteOpen} modal={false}>
         <PopoverAnchor asChild>
@@ -342,7 +356,7 @@ export function PromptInput(args: PromptInputProps) {
           </Command>
         </PopoverContent>
       </Popover>
-      {attachedFilePaths.length > 0 ? (
+      {attachedFilePaths.length > 0 || imageAttachments.length > 0 ? (
         <div className="flex flex-wrap gap-1.5">
           {attachedFilePaths.map((filePath) => (
             <div key={filePath} className="flex items-center gap-1 rounded-sm border border-border/80 bg-secondary/50 px-2 py-1 text-sm">
@@ -352,6 +366,27 @@ export function PromptInput(args: PromptInputProps) {
                 disabled={interactionsDisabled}
                 onClick={() => onAttachFilesChange({ filePaths: attachedFilePaths.filter((p) => p !== filePath) })}
                 className="ml-0.5 rounded-sm p-0.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          ))}
+          {imageAttachments.map((img) => (
+            <div key={img.id} className="relative flex items-center gap-1 rounded-sm border border-border/80 bg-secondary/50 p-1">
+              <img
+                src={img.dataUrl}
+                alt={img.label}
+                className="max-h-16 max-w-24 cursor-zoom-in rounded-sm object-cover"
+                title="Click to view full size"
+                onClick={() => setImagePreviewSrc({ dataUrl: img.dataUrl, label: img.label })}
+              />
+              <button
+                type="button"
+                disabled={interactionsDisabled}
+                onClick={() => onAttachmentsChange?.({
+                  attachments: (attachments ?? []).filter((a) => !(a.kind === "image" && a.id === img.id)),
+                })}
+                className="absolute -right-1 -top-1 rounded-full bg-background p-0.5 text-muted-foreground shadow-sm hover:text-foreground"
               >
                 <X className="size-3" />
               </button>
@@ -464,6 +499,19 @@ export function PromptInput(args: PromptInputProps) {
           >
             <FilePlus2 className="size-3.5" />
           </Button>
+          {screenshotAvailable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => onCaptureScreenshot?.()}
+              disabled={interactionsDisabled}
+              className="h-9 w-9 rounded-md border border-border/70 bg-secondary p-0 text-muted-foreground hover:bg-secondary/60"
+              aria-label="Capture screenshot"
+            >
+              <Camera className="size-3.5" />
+            </Button>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {isTurnActive ? (
@@ -494,5 +542,36 @@ export function PromptInput(args: PromptInputProps) {
         </div>
       </div>
     </form>
+    {imagePreviewSrc ? (
+      <div
+        className="fixed inset-0 z-[90] flex items-center justify-center bg-overlay p-6 backdrop-blur-[2px]"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Image full screen preview"
+        onClick={() => setImagePreviewSrc(null)}
+      >
+        <button
+          type="button"
+          className="absolute right-4 top-4 rounded-sm border border-border/80 bg-card/90 px-2 py-1 text-sm text-foreground hover:bg-accent"
+          onClick={(event) => {
+            event.stopPropagation();
+            setImagePreviewSrc(null);
+          }}
+        >
+          Close
+        </button>
+        <img
+          src={imagePreviewSrc.dataUrl}
+          alt={imagePreviewSrc.label}
+          className="max-h-full max-w-full cursor-zoom-out object-contain"
+          title="Click to close"
+          onClick={(event) => {
+            event.stopPropagation();
+            setImagePreviewSrc(null);
+          }}
+        />
+      </div>
+    ) : null}
+    </>
   );
 }

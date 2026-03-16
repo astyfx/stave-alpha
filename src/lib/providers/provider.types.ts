@@ -1,6 +1,7 @@
 import type {
   CodeDiffPart,
   FileContextPart,
+  ImageContextPart,
   MessagePart,
   MessageRole,
   ToolUsePart,
@@ -44,7 +45,7 @@ export interface CanonicalConversationRequest {
   mode: "chat" | "review";
   history: CanonicalConversationMessage[];
   input: CanonicalConversationMessage & { role: "user" };
-  contextParts: Array<FileContextPart | CanonicalRetrievedContextPart>;
+  contextParts: Array<FileContextPart | CanonicalRetrievedContextPart | ImageContextPart>;
   resume?: {
     nativeConversationId?: string;
   };
