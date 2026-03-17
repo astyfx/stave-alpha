@@ -214,8 +214,9 @@ export interface AppSettings {
   claudeThinkingMode: "adaptive" | "enabled" | "disabled";
   claudeAgentProgressSummaries: boolean;
   codexSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
+  codexSkipGitRepoCheck: boolean;
   codexNetworkAccessEnabled: boolean;
-  codexApprovalPolicy: "never" | "on-request" | "untrusted";
+  codexApprovalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
   codexPathOverride: string;
   codexModelReasoningEffort: "minimal" | "low" | "medium" | "high" | "xhigh";
   codexWebSearchMode: "disabled" | "cached" | "live";
@@ -374,6 +375,7 @@ const defaultSettings: AppSettings = {
   claudeThinkingMode: "adaptive",
   claudeAgentProgressSummaries: false,
   codexSandboxMode: "workspace-write",
+  codexSkipGitRepoCheck: false,
   codexNetworkAccessEnabled: true,
   codexApprovalPolicy: "on-request",
   codexPathOverride: "",
@@ -663,11 +665,13 @@ function applyUserInputState(args: {
 }
 
 function normalizeCodexApprovalPolicy(args: { value?: string }) {
-  if (args.value === "never" || args.value === "on-request" || args.value === "untrusted") {
+  if (
+    args.value === "never"
+    || args.value === "on-request"
+    || args.value === "on-failure"
+    || args.value === "untrusted"
+  ) {
     return args.value;
-  }
-  if (args.value === "on-failure") {
-    return "on-request" as const;
   }
   return defaultSettings.codexApprovalPolicy;
 }
@@ -2105,6 +2109,7 @@ export const useAppStore = create<AppState>()(
               ? { claudeResumeSessionId: providerConversation["claude-code"] }
               : {}),
             codexSandboxMode: get().settings.codexSandboxMode,
+            codexSkipGitRepoCheck: get().settings.codexSkipGitRepoCheck,
             codexNetworkAccessEnabled: get().settings.codexNetworkAccessEnabled,
             codexApprovalPolicy: normalizeCodexApprovalPolicy({
               value: get().settings.codexApprovalPolicy,

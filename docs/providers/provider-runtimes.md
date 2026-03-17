@@ -68,6 +68,7 @@ Codex event mapping:
 Codex-specific runtime controls come from the UI and runtime options:
 
 - network access
+- skip Git repository check
 - sandbox mode
 - approval policy
 - reasoning effort
@@ -82,8 +83,8 @@ Codex threads are keyed by task/cwd plus the active sandbox, network, approval, 
 
 ## Supported Codex baseline
 
-- Codex SDK: `@openai/codex-sdk@0.114.0`
-- Codex CLI baseline: `0.114.0`
+- Codex SDK: `@openai/codex-sdk@0.115.0`
+- Codex CLI baseline: `0.115.0`
 
 Stave expects a local Codex CLI installation. A user-configured binary path takes precedence over PATH-based discovery.
 

@@ -11,9 +11,11 @@ export const CLAUDE_SDK_MODEL_OPTIONS = [
 // Source:
 // - @openai/codex-sdk/dist/index.d.ts (ThreadOptions.model?: string)
 // - https://developers.openai.com/api/docs/models/gpt-5.4
+// - https://developers.openai.com/api/docs/models/gpt-5-codex
 // - https://developers.openai.com/api/docs/models/gpt-5.3-codex
 export const CODEX_SDK_MODEL_OPTIONS = [
   "gpt-5.4",
+  "gpt-5-codex",
   "gpt-5.3-codex",
 ] as const;
 
@@ -131,6 +133,7 @@ export function toHumanModelName(args: { model: string }) {
     "claude-sonnet-4-6": "Claude Sonnet 4.6",
     "claude-haiku-4-5": "Claude Haiku 4.5",
     "gpt-5.4": "GPT-5.4",
+    "gpt-5-codex": "GPT-5-Codex",
     "gpt-5.3-codex": "GPT-5.3-Codex",
   };
   const exact = known[args.model];

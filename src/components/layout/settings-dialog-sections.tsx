@@ -984,6 +984,7 @@ function ProvidersSection() {
     claudeThinkingMode,
     claudeAgentProgressSummaries,
     codexSandboxMode,
+    codexSkipGitRepoCheck,
     codexNetworkAccessEnabled,
     codexApprovalPolicy,
     codexModelReasoningEffort,
@@ -1002,6 +1003,7 @@ function ProvidersSection() {
       state.settings.claudeThinkingMode,
       state.settings.claudeAgentProgressSummaries,
       state.settings.codexSandboxMode,
+      state.settings.codexSkipGitRepoCheck,
       state.settings.codexNetworkAccessEnabled,
       state.settings.codexApprovalPolicy,
       state.settings.codexModelReasoningEffort,
@@ -1164,6 +1166,19 @@ function ProvidersSection() {
               ]}
             />
           </LabeledField>
+          <LabeledField
+            title="Skip Git Repo Check"
+            description="Allows Codex turns to run in folders that are not Git repositories."
+          >
+            <ChoiceButtons
+              value={codexSkipGitRepoCheck ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { codexSkipGitRepoCheck: value === "on" } })}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </LabeledField>
           <LabeledField title="Sandbox Mode">
             <Select
               value={codexSandboxMode}
@@ -1191,7 +1206,7 @@ function ProvidersSection() {
               onValueChange={(value) =>
                 updateSettings({
                   patch: {
-                    codexApprovalPolicy: value as "never" | "on-request" | "untrusted",
+                    codexApprovalPolicy: value as "never" | "on-request" | "on-failure" | "untrusted",
                   },
                 })
               }
@@ -1202,6 +1217,7 @@ function ProvidersSection() {
               <SelectContent>
                 <SelectItem value="never">never</SelectItem>
                 <SelectItem value="on-request">on-request</SelectItem>
+                <SelectItem value="on-failure">on-failure</SelectItem>
                 <SelectItem value="untrusted">untrusted</SelectItem>
               </SelectContent>
             </Select>
@@ -1377,7 +1393,7 @@ function DeveloperSection() {
               Supported Codex baseline
             </p>
             <p className="mt-1">
-              Stave targets Codex SDK `0.114.0` and expects a local `codex` CLI around `0.114.0`.
+              Stave targets Codex SDK `0.115.0` and expects a local `codex` CLI around `0.115.0`.
               If your installed CLI is older, update it or point this field at the version you want Stave to use.
             </p>
           </div>

@@ -28,8 +28,9 @@ interface ProviderStreamTurnArgs {
     claudeDisallowedTools?: string[];
     claudeResumeSessionId?: string;
     codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
+    codexSkipGitRepoCheck?: boolean;
     codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "untrusted";
+    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
     codexPathOverride?: string;
     codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     codexWebSearchMode?: "disabled" | "cached" | "live";

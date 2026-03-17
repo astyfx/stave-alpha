@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCodexConfigOverrides, mapCodexItemEvent } from "../electron/providers/codex-sdk-runtime";
+import { buildCodexConfigOverrides, mapCodexItemEvent, resolveApprovalPolicy } from "../electron/providers/codex-sdk-runtime";
 
 describe("mapCodexItemEvent", () => {
   test("emits a non-streaming reasoning completion event even when there is no final delta", () => {
@@ -121,5 +121,12 @@ describe("buildCodexConfigOverrides", () => {
         codexSupportsReasoningSummaries: "auto",
       },
     })).toBeUndefined();
+  });
+});
+
+describe("resolveApprovalPolicy", () => {
+  test("preserves the on-failure approval mode exposed by the Codex SDK", () => {
+    expect(resolveApprovalPolicy({ runtimeValue: "on-failure" })).toBe("on-failure");
+    expect(resolveApprovalPolicy({ envValue: "on-failure" })).toBe("on-failure");
   });
 });

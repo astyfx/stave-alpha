@@ -36,7 +36,7 @@
     "@anthropic-ai/claude-agent-sdk": "0.2.76",
     "@fontsource-variable/geist": "^5.2.8",
     "@monaco-editor/react": "^4.7.0",
-    "@openai/codex-sdk": "0.114.0",
+    "@openai/codex-sdk": "0.115.0",
     "@radix-ui/react-slot": "^1.2.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

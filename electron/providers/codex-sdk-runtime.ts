@@ -15,8 +15,8 @@ import path from "node:path";
 const threadByTask = new Map<string, Thread>();
 const threadIdByTask = new Map<string, string>();
 
-const SUPPORTED_CODEX_SDK_VERSION = "0.114.0";
-const SUPPORTED_CODEX_CLI_VERSION = "0.114.0";
+const SUPPORTED_CODEX_SDK_VERSION = "0.115.0";
+const SUPPORTED_CODEX_CLI_VERSION = "0.115.0";
 
 function parseBooleanEnv(args: { value: string | undefined; fallback: boolean }) {
   const normalized = args.value?.trim().toLowerCase();
@@ -44,16 +44,18 @@ function resolveSandboxMode(args: {
   return args.fallback;
 }
 
-function resolveApprovalPolicy(args: {
-  runtimeValue?: "never" | "on-request" | "untrusted";
+export function resolveApprovalPolicy(args: {
+  runtimeValue?: "never" | "on-request" | "on-failure" | "untrusted";
   envValue?: string;
-}): "never" | "on-request" | "untrusted" | undefined {
+}): "never" | "on-request" | "on-failure" | "untrusted" | undefined {
   const candidate = args.runtimeValue ?? args.envValue;
-  if (candidate === "never" || candidate === "on-request" || candidate === "untrusted") {
+  if (
+    candidate === "never"
+    || candidate === "on-request"
+    || candidate === "on-failure"
+    || candidate === "untrusted"
+  ) {
     return candidate;
-  }
-  if (candidate === "on-failure") {
-    return "on-request";
   }
   return undefined;
 }
@@ -162,6 +164,7 @@ function buildThreadKey(args: {
     runtimeValue: args.runtimeOptions?.codexApprovalPolicy,
     envValue: process.env.STAVE_CODEX_APPROVAL_POLICY?.trim(),
   });
+  const skipGitRepoCheck = args.runtimeOptions?.codexSkipGitRepoCheck ? "nogit1" : "nogit0";
   const model = args.runtimeOptions?.model?.trim() || "model-default";
   const modelReasoningEffort = args.runtimeOptions?.codexModelReasoningEffort ?? "effort-default";
   const webSearchMode = args.runtimeOptions?.codexWebSearchMode ?? "websearch-default";
@@ -169,7 +172,7 @@ function buildThreadKey(args: {
   const supportsReasoningSummaries = args.runtimeOptions?.codexSupportsReasoningSummaries ?? "supports-auto";
   const showRawAgentReasoning = args.runtimeOptions?.codexShowRawAgentReasoning ? "raw1" : "raw0";
 
-  return `${args.taskId ?? "default"}:${args.cwd}:${sandboxMode}:${networkAccessEnabled ? "net1" : "net0"}:${approvalPolicy ?? "approval-default"}:${model}:${modelReasoningEffort}:${webSearchMode}:${reasoningSummary}:${supportsReasoningSummaries}:${showRawAgentReasoning}`;
+  return `${args.taskId ?? "default"}:${args.cwd}:${sandboxMode}:${skipGitRepoCheck}:${networkAccessEnabled ? "net1" : "net0"}:${approvalPolicy ?? "approval-default"}:${model}:${modelReasoningEffort}:${webSearchMode}:${reasoningSummary}:${supportsReasoningSummaries}:${showRawAgentReasoning}`;
 }
 
 function resolveThreadId(args: { threadKey: string; fallbackThreadId?: string }) {
@@ -507,6 +510,7 @@ function ensureThread(args: {
     ...(args.runtimeOptions?.model ? { model: args.runtimeOptions.model } : {}),
     workingDirectory: args.cwd,
     sandboxMode,
+    ...(args.runtimeOptions?.codexSkipGitRepoCheck ? { skipGitRepoCheck: true } : {}),
     networkAccessEnabled,
     ...(args.runtimeOptions?.codexModelReasoningEffort ? { modelReasoningEffort: args.runtimeOptions.codexModelReasoningEffort } : {}),
     ...(args.runtimeOptions?.codexWebSearchMode ? { webSearchMode: args.runtimeOptions.codexWebSearchMode } : {}),
