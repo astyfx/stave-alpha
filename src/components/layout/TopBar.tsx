@@ -33,24 +33,30 @@ export function TopBar() {
   const [
     isDarkMode,
     workspaceRootName,
+    projectPath,
+    recentProjects,
     activeWorkspaceBranch,
     activeWorkspaceCwd,
     newWorkspaceInitCommand,
     setDarkMode,
     createWorkspace,
     createProject,
+    openProject,
     clearTaskSelection,
     deleteWorkspace,
     refreshProjectFiles,
   ] = useAppStore(useShallow((state) => [
     state.isDarkMode,
     state.workspaceRootName,
+    state.projectPath,
+    state.recentProjects,
     state.workspaceBranchById[state.activeWorkspaceId] ?? "main",
     state.workspacePathById[state.activeWorkspaceId] ?? state.projectPath ?? undefined,
     state.settings.newWorkspaceInitCommand,
     state.setDarkMode,
     state.createWorkspace,
     state.createProject,
+    state.openProject,
     state.clearTaskSelection,
     state.deleteWorkspace,
     state.refreshProjectFiles,
@@ -76,6 +82,10 @@ export function TopBar() {
   const handleCreateProject = useCallback(() => {
     void createProject({});
   }, [createProject]);
+
+  const handleOpenProject = useCallback((nextProjectPath: string) => {
+    void openProject({ projectPath: nextProjectPath });
+  }, [openProject]);
 
   const handleOpenCreateWorkspace = useCallback(() => {
     setCreateWorkspaceOpen(true);
@@ -185,8 +195,11 @@ export function TopBar() {
           <span className="h-4 w-px bg-border/80" />
           <ProjectMenuButton
             projectName={workspaceRootName}
+            currentProjectPath={projectPath}
+            recentProjects={recentProjects}
             currentBranch={activeWorkspaceBranch}
             onCreateProject={handleCreateProject}
+            onOpenProject={handleOpenProject}
             noDragStyle={TOP_BAR_NO_DRAG_STYLE}
           />
           <span className="h-4 w-px bg-border/80" />

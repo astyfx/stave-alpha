@@ -133,6 +133,122 @@ describe("workspace persistence fallback", () => {
     expect(loaded?.promptDraftByTask).toEqual({});
     expect(loaded?.providerConversationByTask).toEqual({});
   });
+
+  test("preserves each project's workspace list when switching projects", async () => {
+    const localStorage = createMemoryStorage();
+    const projectRoots = [
+      {
+        rootPath: "/tmp/stave-project-a",
+        rootName: "project-a",
+        files: ["package.json", "src/a.ts"],
+      },
+      {
+        rootPath: "/tmp/stave-project-b",
+        rootName: "project-b",
+        files: ["package.json", "src/b.ts"],
+      },
+    ];
+    let pickIndex = 0;
+    const filesByRoot: Record<string, string[]> = {
+      "/tmp/stave-project-a": ["package.json", "src/a.ts"],
+      "/tmp/stave-project-a/.stave/workspaces/feature-a": ["package.json", "src/a.ts", "src/feature-a.ts"],
+      "/tmp/stave-project-b": ["package.json", "src/b.ts"],
+    };
+
+    setWindowContext({
+      localStorage,
+      api: {
+        fs: {
+          pickRoot: async () => {
+            const root = projectRoots[pickIndex++];
+            return root
+              ? { ok: true, ...root }
+              : { ok: false, files: [] };
+          },
+          listFiles: async ({ rootPath }: { rootPath: string }) => ({
+            ok: true,
+            files: filesByRoot[rootPath] ?? [],
+          }),
+          readFile: async () => ({ ok: false }),
+          writeFile: async () => ({ ok: false }),
+        },
+      },
+    });
+
+    const { useAppStore } = await import("../src/store/app.store");
+    localStorage.clear();
+    const initialState = useAppStore.getInitialState();
+    useAppStore.setState({
+      ...initialState,
+      recentProjects: [],
+      workspaces: [],
+      activeWorkspaceId: "",
+      projectPath: null,
+      workspaceBranchById: {},
+      workspacePathById: {},
+      workspaceDefaultById: {},
+      workspaceRootName: null,
+      projectFiles: [],
+      hasHydratedWorkspaces: false,
+    });
+
+    await useAppStore.getState().createProject({});
+
+    const stateAfterProjectA = useAppStore.getState();
+    const projectADefaultWorkspaceId = stateAfterProjectA.activeWorkspaceId;
+    const extraWorkspaceId = "ws-a-extra";
+    const extraWorkspacePath = "/tmp/stave-project-a/.stave/workspaces/feature-a";
+    const emptySnapshot = {
+      activeTaskId: "",
+      tasks: [],
+      messagesByTask: {},
+      promptDraftByTask: {},
+      providerConversationByTask: {},
+    };
+    await upsertWorkspace({
+      id: extraWorkspaceId,
+      name: "feature-a",
+      snapshot: emptySnapshot,
+    });
+    useAppStore.setState({
+      workspaces: [
+        ...stateAfterProjectA.workspaces,
+        { id: extraWorkspaceId, name: "feature-a", updatedAt: "2026-03-20T00:00:00.000Z" },
+      ],
+      activeWorkspaceId: extraWorkspaceId,
+      workspaceBranchById: {
+        ...stateAfterProjectA.workspaceBranchById,
+        [extraWorkspaceId]: "feature-a",
+      },
+      workspacePathById: {
+        ...stateAfterProjectA.workspacePathById,
+        [extraWorkspaceId]: extraWorkspacePath,
+      },
+      workspaceDefaultById: {
+        ...stateAfterProjectA.workspaceDefaultById,
+        [extraWorkspaceId]: false,
+      },
+    });
+
+    await useAppStore.getState().createProject({});
+    const stateAfterProjectB = useAppStore.getState();
+    expect(stateAfterProjectB.projectPath).toBe("/tmp/stave-project-b");
+    expect(stateAfterProjectB.workspaces).toHaveLength(1);
+
+    await useAppStore.getState().openProject({ projectPath: "/tmp/stave-project-a" });
+
+    const nextState = useAppStore.getState();
+    expect(nextState.projectPath).toBe("/tmp/stave-project-a");
+    expect(nextState.activeWorkspaceId).toBe(extraWorkspaceId);
+    expect(nextState.workspaces.map((workspace) => workspace.id)).toEqual([
+      projectADefaultWorkspaceId,
+      extraWorkspaceId,
+    ]);
+    expect(nextState.recentProjects.map((project) => project.projectPath)).toEqual([
+      "/tmp/stave-project-a",
+      "/tmp/stave-project-b",
+    ]);
+  });
 });
 
 describe("workspace snapshot schema compatibility", () => {

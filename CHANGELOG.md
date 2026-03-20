@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.13](https://github.com/astyfx/stave/compare/v0.0.12...v0.0.13) (2026-03-20)
+
+### Highlights
+
+- preserved each selected project's own workspace list and last active workspace instead of resetting the app to a single global project state
+- added recent-project reopening in the top-bar project menu so switching back to an earlier folder restores that project's remembered workspace metadata
+- scoped default workspace identities to each project path and added regression coverage for the project A -> project B -> reopen project A flow
+
 ## [0.0.12](https://github.com/astyfx/stave/compare/v0.0.11...v0.0.12) (2026-03-20)
 
 ### Bug Fixes

@@ -3,21 +3,34 @@ import { memo, useState, type CSSProperties } from "react";
 import { Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
+interface RecentProjectMenuItem {
+  projectPath: string;
+  projectName: string;
+  defaultBranch: string;
+}
+
 interface ProjectMenuButtonProps {
   projectName: string | null;
+  currentProjectPath: string | null;
+  recentProjects: RecentProjectMenuItem[];
   currentBranch: string;
   onCreateProject: () => void;
+  onOpenProject: (projectPath: string) => void;
   noDragStyle: CSSProperties;
 }
 
 export const ProjectMenuButton = memo(function ProjectMenuButton({
   projectName,
+  currentProjectPath,
+  recentProjects,
   currentBranch,
   onCreateProject,
+  onOpenProject,
   noDragStyle,
 }: ProjectMenuButtonProps) {
   const [open, setOpen] = useState(false);
   const label = projectName ?? "No Project";
+  const recentProjectItems = recentProjects.filter((project) => project.projectPath !== currentProjectPath);
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -61,6 +74,26 @@ export const ProjectMenuButton = memo(function ProjectMenuButton({
           <p className="truncate text-sm font-medium">{label}</p>
           <p className="truncate text-sm text-muted-foreground">{currentBranch}</p>
         </div>
+        {recentProjectItems.length > 0 ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Recent Projects</DropdownMenuLabel>
+            {recentProjectItems.map((project) => (
+              <DropdownMenuItem
+                key={project.projectPath}
+                className="flex h-auto flex-col items-start gap-0.5 rounded-md px-3 py-2"
+                onSelect={() => {
+                  setOpen(false);
+                  onOpenProject(project.projectPath);
+                }}
+              >
+                <span className="w-full truncate text-sm font-medium">{project.projectName}</span>
+                <span className="w-full truncate text-xs text-muted-foreground">{project.projectPath}</span>
+                <span className="w-full truncate text-xs text-muted-foreground">{project.defaultBranch}</span>
+              </DropdownMenuItem>
+            ))}
+          </>
+        ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

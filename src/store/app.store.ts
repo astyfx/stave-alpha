@@ -60,12 +60,25 @@ interface LayoutState {
   editorDiffMode: boolean;
 }
 
+interface RecentProjectState {
+  projectPath: string;
+  projectName: string;
+  lastOpenedAt: string;
+  defaultBranch: string;
+  workspaces: WorkspaceSummary[];
+  activeWorkspaceId: string;
+  workspaceBranchById: Record<string, string>;
+  workspacePathById: Record<string, string>;
+  workspaceDefaultById: Record<string, boolean>;
+}
+
 const APP_STORE_KEY = "stave-store";
 export const TASK_LIST_MIN_WIDTH = 290;
 export const MIN_EDITOR_PANEL_WIDTH = 600;
 export const DEFAULT_EDITOR_PANEL_WIDTH = 720;
 export const PROVIDER_TIMEOUT_OPTIONS = [600000, 1200000, 1800000] as const;
 export const DEFAULT_PROVIDER_TIMEOUT_MS = 1800000;
+const MAX_RECENT_PROJECTS = 12;
 
 export const THEME_TOKEN_NAMES = [
   "background",
@@ -231,6 +244,7 @@ interface AppState {
   workspaces: WorkspaceSummary[];
   activeWorkspaceId: string;
   projectPath: string | null;
+  recentProjects: RecentProjectState[];
   defaultBranch: string;
   workspaceBranchById: Record<string, string>;
   workspacePathById: Record<string, string>;
@@ -255,6 +269,7 @@ interface AppState {
   hydrateWorkspaces: () => Promise<void>;
   flushActiveWorkspaceSnapshot: (args?: { sync?: boolean }) => Promise<void>;
   createProject: (args: { name?: string }) => Promise<void>;
+  openProject: (args: { projectPath: string }) => Promise<void>;
   createWorkspace: (args: {
     name: string;
     mode: "branch" | "clean";
@@ -797,14 +812,304 @@ function resolveDarkModeForTheme(args: { themeMode: AppSettings["themeMode"]; fa
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
+function resolveProjectNameFromPath(args: { projectPath: string }) {
+  return args.projectPath
+    .split(/[\\/]/)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .at(-1) ?? "project";
+}
+
+function hashProjectPath(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function buildProjectDefaultWorkspaceId(args: { projectPath?: string | null }) {
+  const projectPath = args.projectPath?.trim();
+  return projectPath ? `base:${hashProjectPath(projectPath)}` : starterWorkspaceId;
+}
+
+function resolveCurrentProjectDefaultWorkspaceId(args: {
+  projectPath?: string | null;
+  workspaces: WorkspaceSummary[];
+  workspaceDefaultById: Record<string, boolean>;
+}) {
+  const rememberedDefaultWorkspaceId = Object.entries(args.workspaceDefaultById)
+    .find(([, isDefault]) => isDefault)?.[0];
+  if (rememberedDefaultWorkspaceId) {
+    return rememberedDefaultWorkspaceId;
+  }
+  return args.workspaces.find((workspace) => workspace.id === starterWorkspaceId)?.id
+    ?? args.workspaces.find((workspace) => workspace.name.toLowerCase() === defaultWorkspaceName.toLowerCase())?.id
+    ?? buildProjectDefaultWorkspaceId({ projectPath: args.projectPath });
+}
+
+function cloneRecentProjectState(project: RecentProjectState): RecentProjectState {
+  return {
+    ...project,
+    workspaces: [...project.workspaces],
+    workspaceBranchById: { ...project.workspaceBranchById },
+    workspacePathById: { ...project.workspacePathById },
+    workspaceDefaultById: { ...project.workspaceDefaultById },
+  };
+}
+
+function normalizeRecentProjectStates(args: { projects?: RecentProjectState[] | null }) {
+  let normalizedProjects: RecentProjectState[] = [];
+
+  for (const project of args.projects ?? []) {
+    const projectPath = project?.projectPath?.trim();
+    if (!projectPath) {
+      continue;
+    }
+
+    const lastOpenedAt = project.lastOpenedAt?.trim() || new Date().toISOString();
+    const defaultBranch = project.defaultBranch?.trim() || "main";
+    const workspaceBranchById = { ...(project.workspaceBranchById ?? {}) };
+    const workspacePathById = { ...(project.workspacePathById ?? {}) };
+    const workspaceDefaultById = { ...(project.workspaceDefaultById ?? {}) };
+    const providedWorkspaces = Array.isArray(project.workspaces)
+      ? project.workspaces.filter((workspace) => Boolean(workspace?.id && workspace?.name))
+      : [];
+    const initialDefaultWorkspaceId = resolveCurrentProjectDefaultWorkspaceId({
+      projectPath,
+      workspaces: providedWorkspaces,
+      workspaceDefaultById,
+    });
+    const workspaces = providedWorkspaces.length > 0
+      ? providedWorkspaces.map((workspace) => ({
+          id: workspace.id,
+          name: workspace.name,
+          updatedAt: workspace.updatedAt || lastOpenedAt,
+        }))
+      : [{
+          id: initialDefaultWorkspaceId,
+          name: defaultWorkspaceName,
+          updatedAt: lastOpenedAt,
+        }];
+    const defaultWorkspaceId = resolveCurrentProjectDefaultWorkspaceId({
+      projectPath,
+      workspaces,
+      workspaceDefaultById,
+    });
+    const activeWorkspaceId = workspaces.some((workspace) => workspace.id === project.activeWorkspaceId)
+      ? project.activeWorkspaceId
+      : defaultWorkspaceId;
+
+    workspaceBranchById[defaultWorkspaceId] = workspaceBranchById[defaultWorkspaceId] || defaultBranch;
+    workspacePathById[defaultWorkspaceId] = workspacePathById[defaultWorkspaceId] || projectPath;
+    normalizedProjects = upsertRecentProjectState({
+      projects: normalizedProjects,
+      project: {
+        projectPath,
+        projectName: project.projectName?.trim() || resolveProjectNameFromPath({ projectPath }),
+        lastOpenedAt,
+        defaultBranch,
+        workspaces,
+        activeWorkspaceId,
+        workspaceBranchById,
+        workspacePathById,
+        workspaceDefaultById: {
+          ...workspaceDefaultById,
+          [defaultWorkspaceId]: true,
+        },
+      },
+    });
+  }
+
+  return normalizedProjects;
+}
+
+function upsertRecentProjectState(args: { projects: RecentProjectState[]; project: RecentProjectState }) {
+  const filtered = args.projects.filter((item) => item.projectPath !== args.project.projectPath);
+  return [cloneRecentProjectState(args.project), ...filtered]
+    .sort((left, right) => right.lastOpenedAt.localeCompare(left.lastOpenedAt))
+    .slice(0, MAX_RECENT_PROJECTS);
+}
+
+function captureCurrentProjectState(args: {
+  recentProjects: RecentProjectState[];
+  projectPath: string | null;
+  workspaceRootName: string | null;
+  defaultBranch: string;
+  workspaces: WorkspaceSummary[];
+  activeWorkspaceId: string;
+  workspaceBranchById: Record<string, string>;
+  workspacePathById: Record<string, string>;
+  workspaceDefaultById: Record<string, boolean>;
+}): RecentProjectState[] {
+  if (!args.projectPath) {
+    return args.recentProjects.map((project) => cloneRecentProjectState(project));
+  }
+  return upsertRecentProjectState({
+    projects: args.recentProjects,
+    project: {
+      projectPath: args.projectPath,
+      projectName: args.workspaceRootName ?? "project",
+      lastOpenedAt: new Date().toISOString(),
+      defaultBranch: args.defaultBranch,
+      workspaces: args.workspaces,
+      activeWorkspaceId: args.activeWorkspaceId,
+      workspaceBranchById: args.workspaceBranchById,
+      workspacePathById: args.workspacePathById,
+      workspaceDefaultById: args.workspaceDefaultById,
+    },
+  });
+}
+
 export const useAppStore = create<AppState>()(
   persist(
-    (set, get) => ({
+    (set, get) => {
+      const activateProject = async (args: {
+        projectRootPath: string;
+        projectName: string;
+        files: string[];
+        defaultBranch: string;
+      }) => {
+        await get().flushActiveWorkspaceSnapshot({ sync: true });
+        const stateBeforeSwitch = get();
+        const rememberedProjects = captureCurrentProjectState({
+          recentProjects: stateBeforeSwitch.recentProjects,
+          projectPath: stateBeforeSwitch.projectPath,
+          workspaceRootName: stateBeforeSwitch.workspaceRootName,
+          defaultBranch: stateBeforeSwitch.defaultBranch,
+          workspaces: stateBeforeSwitch.workspaces,
+          activeWorkspaceId: stateBeforeSwitch.activeWorkspaceId,
+          workspaceBranchById: stateBeforeSwitch.workspaceBranchById,
+          workspacePathById: stateBeforeSwitch.workspacePathById,
+          workspaceDefaultById: stateBeforeSwitch.workspaceDefaultById,
+        });
+        const existingProject = rememberedProjects.find((project) => project.projectPath === args.projectRootPath) ?? null;
+
+        if (stateBeforeSwitch.projectPath === args.projectRootPath) {
+          set((state) => ({
+            recentProjects: upsertRecentProjectState({
+              projects: rememberedProjects,
+              project: {
+                ...(existingProject ?? {
+                  projectPath: args.projectRootPath,
+                  projectName: args.projectName,
+                  lastOpenedAt: new Date().toISOString(),
+                  defaultBranch: args.defaultBranch,
+                  workspaces: state.workspaces,
+                  activeWorkspaceId: state.activeWorkspaceId,
+                  workspaceBranchById: state.workspaceBranchById,
+                  workspacePathById: state.workspacePathById,
+                  workspaceDefaultById: state.workspaceDefaultById,
+                }),
+                projectName: args.projectName,
+                defaultBranch: args.defaultBranch,
+                lastOpenedAt: new Date().toISOString(),
+              },
+            }),
+            defaultBranch: args.defaultBranch,
+            workspaceRootName: args.projectName,
+            projectFiles: args.files.length > 0 ? args.files : state.projectFiles,
+          }));
+          return;
+        }
+
+        await workspaceFsAdapter.setRoot?.({
+          rootPath: args.projectRootPath,
+          rootName: args.projectName,
+          files: args.files,
+        });
+
+        if (existingProject) {
+          const nextProject = {
+            ...cloneRecentProjectState(existingProject),
+            projectName: args.projectName,
+            defaultBranch: args.defaultBranch,
+            lastOpenedAt: new Date().toISOString(),
+          };
+          const emptyWorkspaceState = buildWorkspaceSessionState({ snapshot: null });
+          set(() => ({
+            hasHydratedWorkspaces: false,
+            workspaceSnapshotVersion: 0,
+            workspaces: nextProject.workspaces,
+            activeWorkspaceId: nextProject.activeWorkspaceId,
+            projectPath: args.projectRootPath,
+            recentProjects: upsertRecentProjectState({
+              projects: rememberedProjects,
+              project: nextProject,
+            }),
+            defaultBranch: nextProject.defaultBranch,
+            workspaceBranchById: nextProject.workspaceBranchById,
+            workspacePathById: nextProject.workspacePathById,
+            workspaceDefaultById: nextProject.workspaceDefaultById,
+            workspaceRootName: args.projectName,
+            projectFiles: args.files,
+            ...emptyWorkspaceState,
+          }));
+          await get().hydrateWorkspaces();
+          return;
+        }
+
+        const defaultWorkspaceId = buildProjectDefaultWorkspaceId({ projectPath: args.projectRootPath });
+        const now = new Date().toISOString();
+        const empty = createEmptyWorkspaceState();
+        await persistWorkspaceSnapshot({
+          workspaceId: defaultWorkspaceId,
+          workspaceName: defaultWorkspaceName,
+          activeTaskId: empty.activeTaskId,
+          tasks: empty.tasks,
+          messagesByTask: empty.messagesByTask,
+          promptDraftByTask: empty.promptDraftByTask,
+          providerConversationByTask: empty.providerConversationByTask,
+        });
+        const workspaceState = buildWorkspaceSessionState({
+          snapshot: createWorkspaceSnapshot({
+            activeTaskId: empty.activeTaskId,
+            tasks: empty.tasks,
+            messagesByTask: empty.messagesByTask,
+            promptDraftByTask: empty.promptDraftByTask,
+            providerConversationByTask: empty.providerConversationByTask,
+          }),
+        });
+        const nextProject = {
+          projectPath: args.projectRootPath,
+          projectName: args.projectName,
+          lastOpenedAt: now,
+          defaultBranch: args.defaultBranch,
+          workspaces: [{ id: defaultWorkspaceId, name: defaultWorkspaceName, updatedAt: now }],
+          activeWorkspaceId: defaultWorkspaceId,
+          workspaceBranchById: { [defaultWorkspaceId]: args.defaultBranch },
+          workspacePathById: { [defaultWorkspaceId]: args.projectRootPath },
+          workspaceDefaultById: { [defaultWorkspaceId]: true },
+        } satisfies RecentProjectState;
+
+        set(() => ({
+          hasHydratedWorkspaces: true,
+          workspaceSnapshotVersion: 0,
+          workspaces: nextProject.workspaces,
+          activeWorkspaceId: nextProject.activeWorkspaceId,
+          projectPath: args.projectRootPath,
+          recentProjects: upsertRecentProjectState({
+            projects: rememberedProjects,
+            project: nextProject,
+          }),
+          defaultBranch: args.defaultBranch,
+          workspaceBranchById: nextProject.workspaceBranchById,
+          workspacePathById: nextProject.workspacePathById,
+          workspaceDefaultById: nextProject.workspaceDefaultById,
+          ...workspaceState,
+          workspaceRootName: args.projectName,
+          projectFiles: args.files,
+        }));
+      };
+
+      return ({
       hasHydratedWorkspaces: false,
       workspaceSnapshotVersion: 0,
       workspaces: [],
       activeWorkspaceId: "",
       projectPath: null,
+      recentProjects: [],
       defaultBranch: "main",
       workspaceBranchById: {},
       workspacePathById: {},
@@ -837,11 +1142,20 @@ export const useAppStore = create<AppState>()(
       nativeConversationReadyByTask: {},
       providerConversationByTask: {},
       hydrateWorkspaces: async () => {
-        const initialRows = await listWorkspaceSummaries();
+        let initialRows = await listWorkspaceSummaries();
         const stateBeforeHydrate = get();
+        const rememberedWorkspaceIds = new Set([
+          ...stateBeforeHydrate.workspaces.map((workspace) => workspace.id),
+          ...Object.keys(stateBeforeHydrate.workspacePathById),
+        ]);
+        const currentProjectDefaultWorkspaceId = resolveCurrentProjectDefaultWorkspaceId({
+          projectPath: stateBeforeHydrate.projectPath,
+          workspaces: stateBeforeHydrate.workspaces,
+          workspaceDefaultById: stateBeforeHydrate.workspaceDefaultById,
+        });
         if (initialRows.length === 0 && stateBeforeHydrate.projectPath) {
           await persistWorkspaceSnapshot({
-            workspaceId: starterWorkspaceId,
+            workspaceId: currentProjectDefaultWorkspaceId,
             workspaceName: defaultWorkspaceName,
             activeTaskId: "",
             tasks: [],
@@ -849,15 +1163,24 @@ export const useAppStore = create<AppState>()(
             promptDraftByTask: {},
             providerConversationByTask: {},
           });
+          initialRows = await listWorkspaceSummaries();
         }
-        let rows = initialRows.length === 0 && stateBeforeHydrate.projectPath
-          ? await listWorkspaceSummaries()
+        const persistedRowsById = new Map(initialRows.map((workspace) => [workspace.id, workspace] as const));
+        let rows = rememberedWorkspaceIds.size > 0
+          ? stateBeforeHydrate.workspaces.map((workspace) => persistedRowsById.get(workspace.id) ?? workspace)
           : initialRows;
-        const defaultWorkspaceId =
-          rows.find((workspace) => workspace.id === starterWorkspaceId)?.id
-          ?? rows.find((workspace) => workspace.name.toLowerCase() === defaultWorkspaceName.toLowerCase())?.id
-          ?? rows[0]?.id
-          ?? "";
+        if (rows.length === 0 && stateBeforeHydrate.projectPath) {
+          rows = [{
+            id: currentProjectDefaultWorkspaceId,
+            name: defaultWorkspaceName,
+            updatedAt: new Date().toISOString(),
+          }];
+        }
+        const defaultWorkspaceId = resolveCurrentProjectDefaultWorkspaceId({
+          projectPath: stateBeforeHydrate.projectPath,
+          workspaces: rows,
+          workspaceDefaultById: stateBeforeHydrate.workspaceDefaultById,
+        });
 
         // Worktree cleanup: remove DB workspaces whose git worktrees no longer exist
         const runner = window.api?.terminal?.runCommand;
@@ -905,7 +1228,9 @@ export const useAppStore = create<AppState>()(
           }
         }
 
-        const preferredWorkspaceId = rows[0]?.id ?? "";
+        const preferredWorkspaceId = rows.some((workspace) => workspace.id === stateBeforeHydrate.activeWorkspaceId)
+          ? stateBeforeHydrate.activeWorkspaceId
+          : (rows.find((workspace) => workspace.id === defaultWorkspaceId)?.id ?? rows[0]?.id ?? "");
         const [snapshot, latestWorkspaceTurns] = preferredWorkspaceId
           ? await Promise.all([
               loadWorkspaceSnapshot({ workspaceId: preferredWorkspaceId }),
@@ -991,12 +1316,6 @@ export const useAppStore = create<AppState>()(
         }
         const projectRootPath = root.rootPath;
 
-        await workspaceFsAdapter.setRoot?.({
-          rootPath: projectRootPath,
-          rootName: root.rootName,
-          files: root.files,
-        });
-
         const terminalRun = window.api?.terminal?.runCommand;
         let defaultBranch = "main";
         if (terminalRun) {
@@ -1013,41 +1332,43 @@ export const useAppStore = create<AppState>()(
           }
         }
 
-        const projectName = name?.trim() || root.rootName || "project";
-        const empty = createEmptyWorkspaceState();
-        await persistWorkspaceSnapshot({
-          workspaceId: starterWorkspaceId,
-          workspaceName: defaultWorkspaceName,
-          activeTaskId: empty.activeTaskId,
-          tasks: empty.tasks,
-          messagesByTask: empty.messagesByTask,
-          promptDraftByTask: empty.promptDraftByTask,
-          providerConversationByTask: empty.providerConversationByTask,
+        const projectName = name?.trim() || root.rootName || resolveProjectNameFromPath({ projectPath: projectRootPath });
+        await activateProject({
+          projectRootPath,
+          projectName,
+          files: root.files,
+          defaultBranch,
         });
-        const workspaceState = buildWorkspaceSessionState({
-          snapshot: createWorkspaceSnapshot({
-            activeTaskId: empty.activeTaskId,
-            tasks: empty.tasks,
-            messagesByTask: empty.messagesByTask,
-            promptDraftByTask: empty.promptDraftByTask,
-            providerConversationByTask: empty.providerConversationByTask,
-          }),
+      },
+      openProject: async ({ projectPath }) => {
+        const normalizedProjectPath = projectPath.trim();
+        if (!normalizedProjectPath) {
+          return;
+        }
+
+        const state = get();
+        const rememberedProject = state.recentProjects.find((project) => project.projectPath === normalizedProjectPath);
+        const projectName = rememberedProject?.projectName || resolveProjectNameFromPath({ projectPath: normalizedProjectPath });
+        let files = rememberedProject?.projectPath === state.projectPath ? state.projectFiles : [];
+
+        await workspaceFsAdapter.setRoot?.({
+          rootPath: normalizedProjectPath,
+          rootName: projectName,
+          files,
         });
 
-        set(() => ({
-          hasHydratedWorkspaces: true,
-          workspaceSnapshotVersion: 0,
-          workspaces: [{ id: starterWorkspaceId, name: defaultWorkspaceName, updatedAt: new Date().toISOString() }],
-          activeWorkspaceId: starterWorkspaceId,
-          projectPath: projectRootPath,
-          defaultBranch,
-          workspaceBranchById: { [starterWorkspaceId]: defaultBranch },
-          workspacePathById: { [starterWorkspaceId]: projectRootPath },
-          workspaceDefaultById: { [starterWorkspaceId]: true },
-          ...workspaceState,
-          workspaceRootName: projectName,
-          projectFiles: root.files,
-        }));
+        try {
+          files = await workspaceFsAdapter.listFiles();
+        } catch {
+          files = workspaceFsAdapter.getKnownFiles();
+        }
+
+        await activateProject({
+          projectRootPath: normalizedProjectPath,
+          projectName,
+          files,
+          defaultBranch: rememberedProject?.defaultBranch || state.defaultBranch || "main",
+        });
       },
       createWorkspace: async ({ name, mode, fromBranch, initCommand }) => {
         const trimmed = name.trim();
@@ -2775,7 +3096,8 @@ export const useAppStore = create<AppState>()(
           }],
         });
       },
-    }),
+      });
+    },
     {
       name: APP_STORE_KEY,
       partialize: (state) => ({
@@ -2784,6 +3106,17 @@ export const useAppStore = create<AppState>()(
         workspaces: state.workspaces,
         activeWorkspaceId: state.activeWorkspaceId,
         projectPath: state.projectPath,
+        recentProjects: captureCurrentProjectState({
+          recentProjects: state.recentProjects,
+          projectPath: state.projectPath,
+          workspaceRootName: state.workspaceRootName,
+          defaultBranch: state.defaultBranch,
+          workspaces: state.workspaces,
+          activeWorkspaceId: state.activeWorkspaceId,
+          workspaceBranchById: state.workspaceBranchById,
+          workspacePathById: state.workspacePathById,
+          workspaceDefaultById: state.workspaceDefaultById,
+        }),
         defaultBranch: state.defaultBranch,
         workspaceBranchById: state.workspaceBranchById,
         workspacePathById: state.workspacePathById,
@@ -2807,6 +3140,9 @@ export const useAppStore = create<AppState>()(
         });
         state.settings.providerTimeoutMs = normalizeProviderTimeoutMs({
           value: state.settings.providerTimeoutMs,
+        });
+        state.recentProjects = normalizeRecentProjectStates({
+          projects: state.recentProjects,
         });
         state.layout = normalizeLayoutState(state.layout);
         const isDark = resolveDarkModeForTheme({
