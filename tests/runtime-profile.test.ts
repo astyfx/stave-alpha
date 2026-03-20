@@ -1,16 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   configurePersistenceUserDataPath,
-  ensureLegacySharedDatabaseBecomesDevelopmentDatabase,
   resolveDevelopmentUserDataPath,
   resolvePersistenceRuntimeProfile,
 } from "../electron/main/runtime-profile";
@@ -33,43 +26,6 @@ describe("runtime profile persistence paths", () => {
     expect(resolvePersistenceRuntimeProfile({ isPackaged: false })).toBe("development");
     expect(resolvePersistenceRuntimeProfile({ isPackaged: true })).toBe("production");
     expect(resolvePersistenceRuntimeProfile({ isPackaged: false, override: "production" })).toBe("production");
-  });
-
-  test("moves the legacy shared sqlite files into the development profile once", () => {
-    const root = createTempRoot();
-    cleanupRoots.add(root);
-
-    const productionUserDataPath = path.join(root, "Stave");
-    const developmentUserDataPath = resolveDevelopmentUserDataPath({ productionUserDataPath });
-    mkdirSync(productionUserDataPath, { recursive: true });
-
-    writeFileSync(path.join(productionUserDataPath, "stave.sqlite"), "db");
-    writeFileSync(path.join(productionUserDataPath, "stave.sqlite-wal"), "wal");
-    writeFileSync(path.join(productionUserDataPath, "stave.sqlite-shm"), "shm");
-
-    const firstRun = ensureLegacySharedDatabaseBecomesDevelopmentDatabase({
-      productionUserDataPath,
-      developmentUserDataPath,
-    });
-
-    expect(firstRun.migrated).toBe(true);
-    expect(existsSync(path.join(productionUserDataPath, "stave.sqlite"))).toBe(false);
-    expect(existsSync(path.join(developmentUserDataPath, "stave.sqlite"))).toBe(true);
-    expect(existsSync(path.join(developmentUserDataPath, "stave.sqlite-wal"))).toBe(true);
-    expect(existsSync(path.join(developmentUserDataPath, "stave.sqlite-shm"))).toBe(true);
-    expect(JSON.parse(readFileSync(firstRun.markerPath, "utf8"))).toMatchObject({
-      version: 1,
-      migratedLegacyDatabaseToDevelopment: true,
-    });
-
-    writeFileSync(path.join(productionUserDataPath, "stave.sqlite"), "fresh-production-db");
-    const secondRun = ensureLegacySharedDatabaseBecomesDevelopmentDatabase({
-      productionUserDataPath,
-      developmentUserDataPath,
-    });
-
-    expect(secondRun.migrated).toBe(false);
-    expect(readFileSync(path.join(productionUserDataPath, "stave.sqlite"), "utf8")).toBe("fresh-production-db");
   });
 
   test("configures dev builds to use the dev userData path and built local runs to use production", () => {

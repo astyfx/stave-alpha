@@ -18,10 +18,6 @@ interface WorkspaceSnapshotRow {
   snapshot_json: string;
 }
 
-interface TableInfoRow {
-  name: string;
-}
-
 interface TurnSummaryRow {
   id: string;
   workspace_id: string;
@@ -112,25 +108,13 @@ export class SqliteStore {
         ON turn_events (turn_id, sequence);
     `);
 
-    const taskColumns = this.db.prepare("PRAGMA table_info(tasks)").all() as TableInfoRow[];
-    if (!taskColumns.some((column) => column.name === "archived_at")) {
-      this.db.exec("ALTER TABLE tasks ADD COLUMN archived_at TEXT");
-    }
   }
 
   listWorkspaceSummaries(): PersistenceWorkspaceSummary[] {
     const rows = this.db
       .prepare("SELECT id, name, updated_at FROM workspace_meta ORDER BY updated_at DESC")
       .all() as WorkspaceMetaRow[];
-
-    if (rows.length > 0) {
-      return rows.map((row) => ({ id: row.id, name: row.name, updatedAt: row.updated_at }));
-    }
-
-    const fallback = this.db
-      .prepare("SELECT id, name, updated_at FROM workspaces ORDER BY updated_at DESC")
-      .all() as WorkspaceMetaRow[];
-    return fallback.map((row) => ({ id: row.id, name: row.name, updatedAt: row.updated_at }));
+    return rows.map((row) => ({ id: row.id, name: row.name, updatedAt: row.updated_at }));
   }
 
   loadWorkspaceSnapshot(args: { workspaceId: string }): PersistenceWorkspaceSnapshot | null {

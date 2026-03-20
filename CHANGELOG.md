@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.0.10](https://github.com/astyfx/stave/compare/v0.0.9...v0.0.10) (2026-03-20)
+
+### Features
+
+* add typed attachment model with screenshot capture and image viewer ([b686358](https://github.com/astyfx/stave/commit/b6863588fc99890638d45ab44fcfcffea38542fd))
+* align codex runtime with sdk 0.115.0 ([00176b3](https://github.com/astyfx/stave/commit/00176b38b66da85d62513200957b6b6b515cfec5))
+* improve chat context handling and replay diagnostics ([e2c2610](https://github.com/astyfx/stave/commit/e2c26107e4bae37aa9c58f59a0818fe872883583))
+* polish composer and panel controls ([593e773](https://github.com/astyfx/stave/commit/593e7735d54de41d3a0bdcfbc93bbd8ea646afb9))
+* run init commands for new workspaces ([bf8e0d8](https://github.com/astyfx/stave/commit/bf8e0d80d8a4d28fcfae28e519483ebf33198c4d))
+* surface compact boundary, compacting status, and tool progress ([a3b1cab](https://github.com/astyfx/stave/commit/a3b1cab36b66869b50acc499997e3f33fbfba00b))
+* update supported provider model catalog ([5e2fe28](https://github.com/astyfx/stave/commit/5e2fe2897ddc4566ba91f26cabab86c64f883a02))
+
+### Bug Fixes
+
+* add tool_progress case to exhaustive switch statements ([208b050](https://github.com/astyfx/stave/commit/208b050bc6c9e10906f9533372fcae0e98f481c7))
+* honor collapsed reasoning setting while streaming ([406a6be](https://github.com/astyfx/stave/commit/406a6bedbfa473143d4c4874819f818d583b766a))
+* polish replay icons and diff overflow ([2f845f2](https://github.com/astyfx/stave/commit/2f845f2f5af03488b560a90fe5de72ee5483fcc9))
+
+### Highlights
+
+- added typed file attachments across the chat workspace, including screenshot capture, image viewing, and richer attachment rendering for prompt drafts
+- added optional post-create workspace init commands so new git workspaces can bootstrap themselves with setup steps such as dependency installs
+- expanded replay and diagnostics coverage with compact boundary visibility, compacting and tool-progress status, and deeper request-context inspection
+- refreshed the shell and composer UX with a dropdown app menu, cleaner panel controls, generic suggestion primitives, and replay/diff polish
+- updated the Codex runtime integration for SDK `0.115.0`, refreshed the supported model catalog, and aligned provider runtime docs with the shipped behavior
+- simplified persistence internals before release by removing legacy workspace snapshot/runtime migration paths and standardizing draft attachments on multi-file path arrays
+
 ## [0.0.9](https://github.com/astyfx/stave/compare/v0.0.8...v0.0.9) (2026-03-12)
 
 ### Features

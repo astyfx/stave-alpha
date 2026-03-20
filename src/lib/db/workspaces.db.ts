@@ -1,8 +1,6 @@
 import type { Attachment, ChatMessage, Task } from "@/types/chat";
 import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
 import { parseWorkspaceSnapshot } from "@/lib/task-context/schemas";
-import { CURRENT_WORKSPACE_SNAPSHOT_VERSION } from "@/lib/task-context/workspace-snapshot";
-
 export interface WorkspaceSummary {
   id: string;
   name: string;
@@ -15,7 +13,6 @@ export interface TaskProviderConversationState {
 }
 
 export interface WorkspaceSnapshot {
-  version: number;
   activeTaskId: string;
   tasks: Task[];
   messagesByTask: Record<string, ChatMessage[]>;
@@ -151,7 +148,6 @@ export async function upsertWorkspace(args: {
   }
   const normalized: WorkspaceSnapshot = {
     ...validated,
-    version: CURRENT_WORKSPACE_SNAPSHOT_VERSION,
     messagesByTask: normalizeMessagesForSnapshot({ messagesByTask: validated.messagesByTask }),
   };
   const persistence = getPersistenceApi();

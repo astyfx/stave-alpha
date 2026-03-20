@@ -1,7 +1,6 @@
 import { type PersistedTurnSummary } from "@/lib/db/turns.db";
 import { type TaskProviderConversationState, type WorkspaceSnapshot, upsertWorkspace } from "@/lib/db/workspaces.db";
 import { normalizeMessagesForSnapshot } from "@/lib/task-context/message-normalization";
-import { CURRENT_WORKSPACE_SNAPSHOT_VERSION } from "@/lib/task-context/workspace-snapshot";
 import type { Attachment, ChatMessage, Task } from "@/types/chat";
 
 export const starterWorkspaceId = "base";
@@ -209,7 +208,6 @@ export function createWorkspaceSnapshot(args: {
   providerConversationByTask: Record<string, TaskProviderConversationState>;
 }) {
   return {
-    version: CURRENT_WORKSPACE_SNAPSHOT_VERSION,
     activeTaskId: args.activeTaskId,
     tasks: args.tasks,
     messagesByTask: normalizeMessagesForSnapshot({ messagesByTask: args.messagesByTask }),

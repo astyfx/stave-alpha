@@ -146,7 +146,7 @@ describe("workspace snapshot schema compatibility", () => {
         loadWorkspace: async () => ({
           ok: true,
           snapshot: {
-            activeTaskId: "task-1",
+                  activeTaskId: "task-1",
             tasks: [
               {
                 id: "task-1",
@@ -224,7 +224,7 @@ describe("workspace snapshot schema compatibility", () => {
         loadWorkspace: async () => ({
           ok: true,
           snapshot: {
-            activeTaskId: "task-2",
+                  activeTaskId: "task-2",
             tasks: [
               {
                 id: "task-2",
@@ -282,51 +282,6 @@ describe("workspace snapshot schema compatibility", () => {
     });
   });
 
-  test("migrates legacy single-provider conversation state into per-provider ids", async () => {
-    setWindowApi({
-      persistence: {
-        listWorkspaces: async () => ({
-          ok: true,
-          rows: [{ id: "legacy", name: "Legacy", updatedAt: "2026-03-10T00:00:00.000Z" }],
-        }),
-        loadWorkspace: async () => ({
-          ok: true,
-          snapshot: {
-            version: 2,
-            activeTaskId: "task-3",
-            tasks: [
-              {
-                id: "task-3",
-                title: "Task 3",
-                provider: "codex",
-                updatedAt: "2026-03-10T00:00:00.000Z",
-                unread: false,
-              },
-            ],
-            messagesByTask: {
-              "task-3": [],
-            },
-            promptDraftByTask: {},
-            providerConversationByTask: {
-              "task-3": {
-                providerId: "codex",
-                nativeConversationId: "thread-legacy-3",
-              },
-            },
-          },
-        }),
-        upsertWorkspace: async () => ({ ok: true }),
-      },
-    });
-
-    const loaded = await loadWorkspaceSnapshot({ workspaceId: "legacy" });
-
-    expect(loaded?.providerConversationByTask).toEqual({
-      "task-3": {
-        codex: "thread-legacy-3",
-      },
-    });
-  });
 });
 
 describe("workspace store hydration ordering", () => {
@@ -344,8 +299,7 @@ describe("workspace store hydration ordering", () => {
           loadWorkspace: async () => ({
             ok: true,
             snapshot: {
-              version: 3,
-              activeTaskId: "task-db",
+                      activeTaskId: "task-db",
               tasks: [
                 {
                   id: "task-db",
@@ -370,7 +324,6 @@ describe("workspace store hydration ordering", () => {
               promptDraftByTask: {
                 "task-db": {
                   text: "draft from db",
-                  attachedFilePath: "",
                 },
               },
               providerConversationByTask: {
@@ -430,8 +383,7 @@ describe("workspace store hydration ordering", () => {
           loadWorkspace: async () => ({
             ok: true,
             snapshot: {
-              version: 3,
-              activeTaskId: "task-stale",
+                      activeTaskId: "task-stale",
               tasks: [
                 {
                   id: "task-stale",
@@ -640,8 +592,7 @@ describe("workspace store hydration ordering", () => {
             ok: true,
             snapshot: workspaceId === "ws-alt"
               ? {
-                  version: 3,
-                  activeTaskId: "task-alt",
+                              activeTaskId: "task-alt",
                   tasks: [{
                     id: "task-alt",
                     title: "Alt Task",

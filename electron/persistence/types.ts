@@ -26,11 +26,10 @@ export interface PersistenceChatMessageRow {
 }
 
 export interface PersistenceWorkspaceSnapshot {
-  version: number;
   activeTaskId: string;
   tasks: PersistenceTaskRow[];
   messagesByTask: Record<string, PersistenceChatMessageRow[]>;
-  promptDraftByTask?: Record<string, { text: string; attachedFilePath: string }>;
+  promptDraftByTask?: Record<string, { text: string; attachedFilePaths: string[] }>;
 }
 
 export interface PersistenceWorkspaceSummary {

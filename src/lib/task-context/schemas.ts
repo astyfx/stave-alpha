@@ -1,7 +1,5 @@
 import { z } from "zod";
 import type { WorkspaceSnapshot } from "@/lib/db/workspaces.db";
-import { CURRENT_WORKSPACE_SNAPSHOT_VERSION, migrateWorkspaceSnapshotPayload } from "@/lib/task-context/workspace-snapshot";
-
 const TextPartSchema = z.object({
   type: z.literal("text"),
   text: z.string(),
@@ -140,33 +138,19 @@ const TaskProviderConversationStateSchema = z.object({
 });
 
 export const WorkspaceSnapshotSchema = z.object({
-  version: z.literal(CURRENT_WORKSPACE_SNAPSHOT_VERSION),
   activeTaskId: z.string(),
   tasks: z.array(TaskSchema),
   messagesByTask: z.record(z.string(), z.array(ChatMessageSchema)),
   promptDraftByTask: z.record(z.string(), z.object({
     text: z.string(),
     attachedFilePaths: z.array(z.string()).optional().default([]),
-    attachedFilePath: z.string().optional(),
     attachments: z.array(AttachmentSchema).optional().default([]),
-  }).transform((draft) => ({
-    text: draft.text,
-    attachedFilePaths: draft.attachedFilePaths.length > 0
-      ? draft.attachedFilePaths
-      : (draft.attachedFilePath ? [draft.attachedFilePath] : []),
-    attachments: draft.attachments,
-  }))).optional().default({}),
+  })).optional().default({}),
   providerConversationByTask: z.record(z.string(), TaskProviderConversationStateSchema).optional().default({}),
 });
 
 export function parseWorkspaceSnapshot(args: { payload: unknown }): WorkspaceSnapshot | null {
-  const migratedPayload = migrateWorkspaceSnapshotPayload({ payload: args.payload });
-  if (!migratedPayload) {
-    console.error("[task-context] invalid workspace snapshot payload", { reason: "migration_failed" });
-    return null;
-  }
-
-  const parsed = WorkspaceSnapshotSchema.safeParse(migratedPayload);
+  const parsed = WorkspaceSnapshotSchema.safeParse(args.payload);
   if (!parsed.success) {
     console.error("[task-context] invalid workspace snapshot payload", parsed.error.flatten());
     return null;

@@ -305,7 +305,6 @@ interface WindowPersistenceApi {
   loadWorkspace?: (args: { workspaceId: string }) => Promise<{
     ok: boolean;
     snapshot: {
-      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -334,7 +333,6 @@ interface WindowPersistenceApi {
       promptDraftByTask?: Record<string, {
         text: string;
         attachedFilePaths?: string[];
-        attachedFilePath?: string;
       }>;
       providerConversationByTask?: Record<string, {
         "claude-code"?: string;
@@ -346,7 +344,6 @@ interface WindowPersistenceApi {
     id: string;
     name: string;
     snapshot: {
-      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -375,7 +372,6 @@ interface WindowPersistenceApi {
       promptDraftByTask?: Record<string, {
         text: string;
         attachedFilePaths?: string[];
-        attachedFilePath?: string;
       }>;
       providerConversationByTask?: Record<string, {
         "claude-code"?: string;
@@ -412,7 +408,6 @@ interface WindowPersistenceApi {
     id: string;
     name: string;
     snapshot: {
-      version: number;
       activeTaskId: string;
       tasks: Array<{
         id: string;
@@ -441,7 +436,6 @@ interface WindowPersistenceApi {
       promptDraftByTask?: Record<string, {
         text: string;
         attachedFilePaths?: string[];
-        attachedFilePath?: string;
       }>;
       providerConversationByTask?: Record<string, {
         "claude-code"?: string;
