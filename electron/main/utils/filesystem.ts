@@ -32,9 +32,6 @@ export async function listFilesRecursive(args: { rootPath?: string | null; maxDe
       if (files.length >= maxFiles) {
         break;
       }
-      if (entry.name.startsWith(".")) {
-        continue;
-      }
       const fullPath = path.join(currentPath, entry.name);
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {

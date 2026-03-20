@@ -128,13 +128,10 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
 
     if (iterableHandle.entries) {
       for await (const [name, handle] of iterableHandle.entries()) {
-        if (name.startsWith(".")) {
-          continue;
-        }
         const nextPath = args.prefix ? `${args.prefix}/${name}` : name;
         if (handle.kind === "file") {
           this.fileHandleMap.set(nextPath, handle as FileSystemFileHandle);
-        } else {
+        } else if (!isIgnoredBrowserDirectory(name)) {
           await this.walkDirectory({
             handle: handle as FileSystemDirectoryHandle,
             prefix: nextPath,
@@ -153,13 +150,10 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
     if (iterableHandle.values) {
       for await (const handle of iterableHandle.values()) {
         const name = handle.name;
-        if (name.startsWith(".")) {
-          continue;
-        }
         const nextPath = args.prefix ? `${args.prefix}/${name}` : name;
         if (handle.kind === "file") {
           this.fileHandleMap.set(nextPath, handle as FileSystemFileHandle);
-        } else {
+        } else if (!isIgnoredBrowserDirectory(name)) {
           await this.walkDirectory({
             handle: handle as FileSystemDirectoryHandle,
             prefix: nextPath,
@@ -174,4 +168,8 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
       }
     }
   }
+}
+
+function isIgnoredBrowserDirectory(name: string) {
+  return name.startsWith(".") || name === "node_modules" || name === "dist" || name === "out";
 }

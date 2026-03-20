@@ -1,7 +1,7 @@
 {
   "name": "stave",
   "private": true,
-  "version": "0.0.11",
+  "version": "0.0.12",
   "description": "Stave: Agentic Coding IDE.",
   "author": {
     "name": "astyfx",

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.12](https://github.com/astyfx/stave/compare/v0.0.11...v0.0.12) (2026-03-20)
+
+### Bug Fixes
+
+* stabilize electron native rebuild scripts ([d1cd758](https://github.com/astyfx/stave/commit/d1cd758743cfad7c3efc9be552778f6d0dc75ca8))
+* validate filesystem IPC path inputs ([b661ab4](https://github.com/astyfx/stave/commit/b661ab429fc55bd7d7dfc4234b00d9fd6c7cb155))
+
+### Highlights
+
+- stabilized Electron native rebuilds by resolving script paths from `import.meta.url` and caching Electron headers under the repo-local `.cache/node-gyp/` directory
+- hardened filesystem IPC and workspace file loaders so missing `rootPath` or `filePath` values return descriptive failures instead of raw Node `path` exceptions
+- aligned browser and Electron file explorers to keep hidden files such as `.env` visible while still skipping ignored directories like `.git`, `node_modules`, `dist`, and `out`
+
 ## [0.0.11](https://github.com/astyfx/stave/compare/v0.0.10...v0.0.11) (2026-03-20)
 
 ### Highlights
