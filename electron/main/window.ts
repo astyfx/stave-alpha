@@ -23,6 +23,7 @@ export function createMainWindow() {
   const allowedOrigin = devServerUrl
     ? new URL(devServerUrl).origin
     : null;
+  const shouldHideMacWindowButtons = process.platform === "darwin";
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -38,6 +39,10 @@ export function createMainWindow() {
       allowRunningInsecureContent: false,
     },
   });
+  if (shouldHideMacWindowButtons) {
+    // Keep the custom Stave top bar without the native macOS traffic-light buttons.
+    window.setWindowButtonVisibility(false);
+  }
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     void openExternalWithFallback({ url });
