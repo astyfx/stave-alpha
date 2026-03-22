@@ -76,7 +76,7 @@ bun run dev:desktop:poll
 
 ## Desktop packaging
 
-The desktop packaging scripts and `bun run run:desktop:built` now rebuild native Electron modules automatically before bundling or launching the built app. If your local install gets out of sync after `bun install`, run the rebuild manually:
+The desktop packaging scripts and `bun run run:desktop:built` now rebuild native Electron modules automatically before bundling or launching the built app. On macOS, `bun run run:desktop:built` now launches the unpacked `Stave.app` bundle so the OS shows the app as `Stave` instead of `Electron`. If your local install gets out of sync after `bun install`, run the rebuild manually:
 
 ```bash
 bun run rebuild:electron-deps

@@ -18,7 +18,7 @@
     "build": "tsc --noEmit && vite build",
     "build:desktop": "tsc --noEmit && electron-vite build",
     "package:desktop": "bun run rebuild:electron-deps && bun run build:desktop && electron-builder --config electron-builder.yml --dir",
-    "run:desktop:built": "bun run rebuild:electron-deps && bun run build:desktop && STAVE_RUNTIME_PROFILE=production electron .",
+    "run:desktop:built": "bun run rebuild:electron-deps && bun run build:desktop && node scripts/run-desktop-built.mjs",
     "package:linux:dir": "bun run rebuild:electron-deps && bun run build:desktop && electron-builder --config electron-builder.yml --linux dir",
     "package:linux:appimage": "bun run rebuild:electron-deps && bun run build:desktop && electron-builder --config electron-builder.yml --linux AppImage",
     "package:linux:deb": "bun run rebuild:electron-deps && bun run build:desktop && electron-builder --config electron-builder.yml --linux deb",

@@ -18,6 +18,7 @@ describe("package scripts", () => {
     expect(scripts["rebuild:electron-deps"]).toBe("node scripts/rebuild-electron-deps.mjs");
     expect(scripts["package:desktop"].startsWith("bun run rebuild:electron-deps && ")).toBe(true);
     expect(scripts["run:desktop:built"].startsWith("bun run rebuild:electron-deps && ")).toBe(true);
+    expect(scripts["run:desktop:built"].endsWith("node scripts/run-desktop-built.mjs")).toBe(true);
     expect(scripts["package:linux:dir"].startsWith("bun run rebuild:electron-deps && ")).toBe(true);
     expect(scripts["package:linux:appimage"].startsWith("bun run rebuild:electron-deps && ")).toBe(true);
     expect(scripts["package:linux:deb"].startsWith("bun run rebuild:electron-deps && ")).toBe(true);
