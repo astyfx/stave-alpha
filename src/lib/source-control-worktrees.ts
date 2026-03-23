@@ -1,25 +1,71 @@
-export function parseWorktreePathByBranch(args: { stdout: string }) {
-  const worktreePathByBranch: Record<string, string> = {};
+export interface GitWorktreeEntry {
+  path: string;
+  branch: string | null;
+  detached: boolean;
+}
+
+export function parseGitWorktrees(args: { stdout: string }) {
+  const entries: GitWorktreeEntry[] = [];
   let currentWorktreePath = "";
+  let currentBranch: string | null = null;
+  let detached = false;
+
+  const flushCurrentEntry = () => {
+    if (!currentWorktreePath) {
+      return;
+    }
+    entries.push({
+      path: currentWorktreePath,
+      branch: currentBranch,
+      detached,
+    });
+    currentWorktreePath = "";
+    currentBranch = null;
+    detached = false;
+  };
 
   for (const rawLine of args.stdout.split("\n")) {
     const line = rawLine.trimEnd();
     if (!line) {
-      currentWorktreePath = "";
+      flushCurrentEntry();
       continue;
     }
     if (line.startsWith("worktree ")) {
+      flushCurrentEntry();
       currentWorktreePath = line.slice("worktree ".length).trim();
       continue;
     }
-    if (!currentWorktreePath || !line.startsWith("branch refs/heads/")) {
+    if (!currentWorktreePath) {
       continue;
     }
 
-    const branch = line.slice("branch refs/heads/".length).trim();
-    if (branch) {
-      worktreePathByBranch[branch] = currentWorktreePath;
+    if (line.startsWith("branch refs/heads/")) {
+      const branch = line.slice("branch refs/heads/".length).trim();
+      if (branch) {
+        currentBranch = branch;
+        detached = false;
+      }
+      continue;
     }
+
+    if (line === "detached") {
+      currentBranch = null;
+      detached = true;
+    }
+  }
+
+  flushCurrentEntry();
+  return entries;
+}
+
+export function parseWorktreePathByBranch(args: { stdout: string }) {
+  const worktreePathByBranch: Record<string, string> = {};
+
+  for (const entry of parseGitWorktrees(args)) {
+    if (!entry.branch) {
+      continue;
+    }
+    worktreePathByBranch[entry.branch] = entry.path;
   }
 
   return worktreePathByBranch;

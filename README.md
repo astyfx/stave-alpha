@@ -9,6 +9,7 @@ Stave is an Electron-based AI coding workspace built with Bun, React, Vite, and 
 - Session Replay drawer for recent-turn inspection and request snapshots
 - Monaco editor with workspace-backed TypeScript IntelliSense, optional Python LSP support, docked terminal, and source-control actions
 - recent-project switching that preserves each project's own workspace list and last active workspace
+- automatic import of existing branch-backed git worktrees when a project opens
 - optional post-create workspace bootstrap command for new git worktrees, such as `bun install` or `npm install`
 - SQLite-backed local persistence for workspaces, tasks, messages, and turns
 

@@ -1,5 +1,41 @@
 import { describe, expect, test } from "bun:test";
-import { isBranchAttachedElsewhere, normalizeComparablePath, parseWorktreePathByBranch } from "../src/lib/source-control-worktrees";
+import { isBranchAttachedElsewhere, normalizeComparablePath, parseGitWorktrees, parseWorktreePathByBranch } from "../src/lib/source-control-worktrees";
+
+describe("parseGitWorktrees", () => {
+  test("parses branch-backed and detached worktrees from porcelain output", () => {
+    const stdout = [
+      "worktree /tmp/stave-project",
+      "HEAD abc123",
+      "branch refs/heads/main",
+      "",
+      "worktree /tmp/stave-project/.stave/workspaces/feature__perf",
+      "HEAD def456",
+      "branch refs/heads/feature/perf",
+      "",
+      "worktree /tmp/stave-project/.stave/workspaces/detached",
+      "HEAD fedcba",
+      "detached",
+    ].join("\n");
+
+    expect(parseGitWorktrees({ stdout })).toEqual([
+      {
+        path: "/tmp/stave-project",
+        branch: "main",
+        detached: false,
+      },
+      {
+        path: "/tmp/stave-project/.stave/workspaces/feature__perf",
+        branch: "feature/perf",
+        detached: false,
+      },
+      {
+        path: "/tmp/stave-project/.stave/workspaces/detached",
+        branch: null,
+        detached: true,
+      },
+    ]);
+  });
+});
 
 describe("parseWorktreePathByBranch", () => {
   test("maps checked-out branches to their worktree paths", () => {

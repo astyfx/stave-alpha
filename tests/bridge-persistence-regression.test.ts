@@ -620,6 +620,77 @@ describe("workspace store hydration ordering", () => {
     expect(useAppStore.getState().projectFiles).toEqual(listedFiles);
   });
 
+  test("hydrateWorkspaces auto-imports existing git worktrees missing from the DB", async () => {
+    const localStorage = createMemoryStorage();
+    const upsertCalls: Array<{ id: string; name: string; snapshot: unknown }> = [];
+    setWindowContext({
+      localStorage,
+      api: {
+        persistence: {
+          listWorkspaces: async () => ({
+            ok: true,
+            rows: [{ id: "ws-main", name: "Main", updatedAt: "2026-03-10T00:00:00.000Z" }],
+          }),
+          loadWorkspace: async () => ({ ok: true, snapshot: null }),
+          listLatestWorkspaceTurns: async () => ({ ok: true, turns: [] }),
+          upsertWorkspace: async (args: { id: string; name: string; snapshot: unknown }) => {
+            upsertCalls.push(args);
+            return { ok: true };
+          },
+        },
+        terminal: {
+          runCommand: async ({ command }: { cwd?: string; command: string }) => {
+            if (command === "git worktree prune") {
+              return { ok: true, code: 0, stdout: "", stderr: "" };
+            }
+            if (command === "git worktree list --porcelain") {
+              return {
+                ok: true,
+                code: 0,
+                stdout: [
+                  "worktree /tmp/stave-project",
+                  "HEAD abc123",
+                  "branch refs/heads/main",
+                  "",
+                  "worktree /tmp/stave-project/.stave/workspaces/feature__perf",
+                  "HEAD def456",
+                  "branch refs/heads/feature/perf",
+                ].join("\n"),
+                stderr: "",
+              };
+            }
+            return { ok: false, code: 1, stdout: "", stderr: `Unexpected command: ${command}` };
+          },
+        },
+      },
+    });
+
+    const { useAppStore } = await import("../src/store/app.store");
+    const initialState = useAppStore.getInitialState();
+    useAppStore.setState({
+      ...initialState,
+      workspaces: [{ id: "ws-main", name: "Main", updatedAt: "2026-03-09T00:00:00.000Z" }],
+      activeWorkspaceId: "ws-main",
+      projectPath: "/tmp/stave-project",
+      workspacePathById: { "ws-main": "/tmp/stave-project" },
+      workspaceBranchById: { "ws-main": "main" },
+      workspaceDefaultById: { "ws-main": true },
+      hasHydratedWorkspaces: false,
+    });
+
+    await useAppStore.getState().hydrateWorkspaces();
+
+    const nextState = useAppStore.getState();
+    const importedWorkspace = nextState.workspaces.find((workspace) => workspace.name === "feature/perf");
+
+    expect(importedWorkspace).not.toBeUndefined();
+    expect(upsertCalls).toHaveLength(1);
+    expect(upsertCalls[0]?.name).toBe("feature/perf");
+    expect(importedWorkspace?.id).toBe(upsertCalls[0]?.id);
+    expect(nextState.workspaceBranchById[importedWorkspace?.id ?? ""]).toBe("feature/perf");
+    expect(nextState.workspacePathById[importedWorkspace?.id ?? ""]).toBe("/tmp/stave-project/.stave/workspaces/feature__perf");
+  });
+
   test("flushActiveWorkspaceSnapshot is blocked until workspace hydration completes", async () => {
     const localStorage = createMemoryStorage();
     const upsertCalls: Array<unknown> = [];

@@ -46,6 +46,7 @@ import {
   persistWorkspaceSnapshot,
   starterWorkspaceId,
 } from "@/store/workspace-session-state";
+import { normalizeComparablePath, parseGitWorktrees } from "@/lib/source-control-worktrees";
 import { interruptWorkspaceTurnsBeforeTransition } from "@/store/task-turn-lifecycle";
 
 interface LayoutState {
@@ -834,6 +835,14 @@ function buildProjectDefaultWorkspaceId(args: { projectPath?: string | null }) {
   return projectPath ? `base:${hashProjectPath(projectPath)}` : starterWorkspaceId;
 }
 
+function buildImportedWorktreeWorkspaceId(args: { projectPath: string; worktreePath: string }) {
+  return `worktree:${hashProjectPath(`${normalizeComparablePath(args.projectPath)}::${normalizeComparablePath(args.worktreePath)}`)}`;
+}
+
+function resolveImportedWorktreeName(args: { branch?: string | null; worktreePath: string }) {
+  return args.branch?.trim() || resolveProjectNameFromPath({ projectPath: args.worktreePath });
+}
+
 function resolveCurrentProjectDefaultWorkspaceId(args: {
   projectPath?: string | null;
   workspaces: WorkspaceSummary[];
@@ -1181,6 +1190,8 @@ export const useAppStore = create<AppState>()(
           workspaces: rows,
           workspaceDefaultById: stateBeforeHydrate.workspaceDefaultById,
         });
+        const importedWorktreePathById: Record<string, string> = {};
+        const importedWorktreeBranchById: Record<string, string> = {};
 
         // Worktree cleanup: remove DB workspaces whose git worktrees no longer exist
         const runner = window.api?.terminal?.runCommand;
@@ -1189,18 +1200,18 @@ export const useAppStore = create<AppState>()(
           await runner({ cwd: projectPath, command: "git worktree prune" });
           const listResult = await runner({ cwd: projectPath, command: "git worktree list --porcelain" });
           if (listResult.ok) {
+            const discoveredWorktrees = parseGitWorktrees({ stdout: listResult.stdout });
             const registeredPaths = new Set(
-              listResult.stdout
-                .split("\n")
-                .filter((line) => line.startsWith("worktree "))
-                .map((line) => line.slice("worktree ".length).trim()),
+              discoveredWorktrees
+                .map((entry) => normalizeComparablePath(entry.path))
+                .filter(Boolean),
             );
             const staleIds: string[] = [];
             for (const row of rows) {
               if (row.id === defaultWorkspaceId) continue;
               const wsPath = stateBeforeHydrate.workspacePathById[row.id]
                 ?? `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`;
-              if (!registeredPaths.has(wsPath)) {
+              if (!registeredPaths.has(normalizeComparablePath(wsPath))) {
                 staleIds.push(row.id);
               }
             }
@@ -1210,11 +1221,61 @@ export const useAppStore = create<AppState>()(
             if (staleIds.length > 0) {
               rows = rows.filter((row) => !staleIds.includes(row.id));
             }
+
+            const knownPaths = new Set(
+              rows
+                .map((row) => stateBeforeHydrate.workspacePathById[row.id]
+                  ?? (row.id === defaultWorkspaceId
+                    ? projectPath
+                    : `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`))
+                .map((value) => normalizeComparablePath(value))
+                .filter(Boolean),
+            );
+            const currentProjectPath = normalizeComparablePath(projectPath);
+
+            for (const worktree of discoveredWorktrees) {
+              const normalizedWorktreePath = normalizeComparablePath(worktree.path);
+              if (!worktree.branch || !normalizedWorktreePath || normalizedWorktreePath === currentProjectPath || knownPaths.has(normalizedWorktreePath)) {
+                continue;
+              }
+
+              const workspaceId = buildImportedWorktreeWorkspaceId({
+                projectPath,
+                worktreePath: worktree.path,
+              });
+              const workspaceName = resolveImportedWorktreeName({
+                branch: worktree.branch,
+                worktreePath: worktree.path,
+              });
+              const persistedWorkspace = rows.find((row) => row.id === workspaceId) ?? persistedRowsById.get(workspaceId);
+
+              if (!persistedWorkspace) {
+                await persistWorkspaceSnapshot({
+                  workspaceId,
+                  workspaceName,
+                  activeTaskId: "",
+                  tasks: [],
+                  messagesByTask: {},
+                  promptDraftByTask: {},
+                  providerConversationByTask: {},
+                });
+              }
+
+              if (!rows.some((row) => row.id === workspaceId)) {
+                rows = [...rows, persistedWorkspace ?? { id: workspaceId, name: workspaceName, updatedAt: new Date().toISOString() }];
+              }
+
+              importedWorktreeBranchById[workspaceId] = worktree.branch;
+              importedWorktreePathById[workspaceId] = worktree.path;
+              knownPaths.add(normalizedWorktreePath);
+            }
           }
         }
 
         const branchById: Record<string, string> = { ...stateBeforeHydrate.workspaceBranchById };
         const pathById: Record<string, string> = { ...stateBeforeHydrate.workspacePathById };
+        Object.assign(branchById, importedWorktreeBranchById);
+        Object.assign(pathById, importedWorktreePathById);
 
         for (const row of rows) {
           const isDefault = row.id === defaultWorkspaceId;
