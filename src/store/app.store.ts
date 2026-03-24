@@ -18,10 +18,12 @@ import {
 } from "@/lib/providers/canonical-request";
 import { getDefaultModelForProvider, listProviderIds } from "@/lib/providers/model-catalog";
 import { getCachedProviderCommandCatalog } from "@/lib/providers/provider-command-catalog";
-import { getArchiveFallbackTaskId, isTaskArchived } from "@/lib/tasks";
+import { getArchiveFallbackTaskId, isTaskArchived, reorderTasksWithinFilter, type TaskFilter } from "@/lib/tasks";
 import {
   replayProviderEventsToTaskState,
 } from "@/lib/session/provider-event-replay";
+import { resolveSkillSelections } from "@/lib/skills/catalog";
+import type { SkillCatalogEntry, SkillCatalogRoot } from "@/lib/skills/types";
 import {
   findLatestPendingApprovalPart,
   findLatestPendingUserInputPart,
@@ -45,9 +47,9 @@ import {
   defaultWorkspaceName,
   persistWorkspaceSnapshot,
   starterWorkspaceId,
+  type WorkspaceSessionState,
 } from "@/store/workspace-session-state";
 import { normalizeComparablePath, parseGitWorktrees } from "@/lib/source-control-worktrees";
-import { interruptWorkspaceTurnsBeforeTransition } from "@/store/task-turn-lifecycle";
 
 interface LayoutState {
   taskListWidth: number;
@@ -57,8 +59,18 @@ interface LayoutState {
   terminalDockHeight: number;
   editorVisible: boolean;
   sidebarOverlayVisible: boolean;
+  sidebarOverlayTab: "explorer" | "changes";
   terminalDocked: boolean;
   editorDiffMode: boolean;
+}
+
+interface SkillCatalogState {
+  status: "idle" | "loading" | "ready" | "error";
+  workspacePath: string | null;
+  fetchedAt: string | null;
+  skills: SkillCatalogEntry[];
+  roots: SkillCatalogRoot[];
+  detail: string;
 }
 
 interface RecentProjectState {
@@ -264,13 +276,19 @@ interface AppState {
   projectFiles: string[];
   taskCheckpointById: Record<string, string>;
   providerAvailability: Record<ProviderId, boolean>;
+  skillCatalog: SkillCatalogState;
   activeTurnIdsByTask: Record<string, string | undefined>;
   nativeConversationReadyByTask: Record<string, boolean>;
   providerConversationByTask: Record<string, TaskProviderConversationState>;
+  workspaceRuntimeCacheById: Record<string, WorkspaceSessionState>;
+  taskWorkspaceIdById: Record<string, string>;
   hydrateWorkspaces: () => Promise<void>;
   flushActiveWorkspaceSnapshot: (args?: { sync?: boolean }) => Promise<void>;
   createProject: (args: { name?: string }) => Promise<void>;
+  openProjectFromPath: (args: { inputPath: string }) => Promise<{ ok: boolean; stderr?: string }>;
   openProject: (args: { projectPath: string }) => Promise<void>;
+  removeProjectFromList: (args: { projectPath: string }) => Promise<void>;
+  moveProjectInList: (args: { projectPath: string; direction: "up" | "down" }) => void;
   createWorkspace: (args: {
     name: string;
     mode: "branch" | "clean";
@@ -279,6 +297,11 @@ interface AppState {
   }) => Promise<{ ok: boolean; message?: string; noticeLevel?: "success" | "warning" }>;
   deleteWorkspace: (args: { workspaceId: string }) => Promise<void>;
   switchWorkspace: (args: { workspaceId: string }) => Promise<void>;
+  moveWorkspaceInProjectList: (args: {
+    projectPath: string;
+    workspaceId: string;
+    direction: "up" | "down";
+  }) => void;
   setDarkMode: (args: { enabled: boolean }) => void;
   updateSettings: (args: { patch: Partial<AppSettings> }) => void;
   selectTask: (args: { taskId: string }) => void;
@@ -287,7 +310,9 @@ interface AppState {
   clearPromptDraft: (args: { taskId: string }) => void;
   createTask: (args: { title?: string }) => void;
   renameTask: (args: { taskId: string; title: string }) => void;
+  restoreTask: (args: { taskId: string }) => void;
   duplicateTask: (args: { taskId: string }) => void;
+  reorderTasks: (args: { activeTaskId: string; overTaskId: string; filter: TaskFilter }) => void;
   exportTask: (args: { taskId: string }) => void;
   viewTaskChanges: (args: { taskId: string }) => Promise<void>;
   rollbackTask: (args: { taskId: string }) => Promise<void>;
@@ -299,6 +324,7 @@ interface AppState {
   openWorkspacePicker: () => Promise<void>;
   refreshProjectFiles: () => Promise<void>;
   refreshProviderAvailability: () => Promise<void>;
+  refreshSkillCatalog: (args?: { workspacePath?: string | null }) => Promise<void>;
   sendUserMessage: (args: {
     taskId: string;
     content: string;
@@ -464,7 +490,106 @@ function normalizeLayoutState(layout: LayoutState): LayoutState {
   return {
     ...layout,
     editorPanelWidth: Math.max(MIN_EDITOR_PANEL_WIDTH, layout.editorPanelWidth),
+    sidebarOverlayTab: layout.sidebarOverlayTab === "changes" ? "changes" : "explorer",
   };
+}
+
+function createWorkspaceSessionStateFromAppState(state: Pick<
+  AppState,
+  | "activeTaskId"
+  | "tasks"
+  | "messagesByTask"
+  | "promptDraftByTask"
+  | "activeTurnIdsByTask"
+  | "providerConversationByTask"
+  | "nativeConversationReadyByTask"
+>): WorkspaceSessionState {
+  return {
+    activeTaskId: state.activeTaskId,
+    tasks: state.tasks,
+    messagesByTask: state.messagesByTask,
+    promptDraftByTask: state.promptDraftByTask,
+    activeTurnIdsByTask: state.activeTurnIdsByTask,
+    providerConversationByTask: state.providerConversationByTask,
+    nativeConversationReadyByTask: state.nativeConversationReadyByTask,
+  };
+}
+
+function createActiveWorkspaceStatePatch(session: WorkspaceSessionState) {
+  return {
+    activeTaskId: session.activeTaskId,
+    tasks: session.tasks,
+    messagesByTask: session.messagesByTask,
+    promptDraftByTask: session.promptDraftByTask,
+    activeTurnIdsByTask: session.activeTurnIdsByTask,
+    providerConversationByTask: session.providerConversationByTask,
+    nativeConversationReadyByTask: session.nativeConversationReadyByTask,
+  };
+}
+
+function registerTaskWorkspaceOwnership(args: {
+  taskWorkspaceIdById: Record<string, string>;
+  workspaceId: string;
+  tasks: Task[];
+}) {
+  const next = { ...args.taskWorkspaceIdById };
+  for (const task of args.tasks) {
+    next[task.id] = args.workspaceId;
+  }
+  return next;
+}
+
+function saveActiveWorkspaceRuntimeCache(args: {
+  state: Pick<
+    AppState,
+    | "activeWorkspaceId"
+    | "workspaceRuntimeCacheById"
+    | "activeTaskId"
+    | "tasks"
+    | "messagesByTask"
+    | "promptDraftByTask"
+    | "activeTurnIdsByTask"
+    | "providerConversationByTask"
+    | "nativeConversationReadyByTask"
+  >;
+}) {
+  if (!args.state.activeWorkspaceId) {
+    return args.state.workspaceRuntimeCacheById;
+  }
+  return {
+    ...args.state.workspaceRuntimeCacheById,
+    [args.state.activeWorkspaceId]: createWorkspaceSessionStateFromAppState(args.state),
+  };
+}
+
+function resolveWorkspaceName(args: {
+  state: Pick<AppState, "workspaces" | "recentProjects">;
+  workspaceId: string;
+}) {
+  const activeWorkspaceName = args.state.workspaces.find((workspace) => workspace.id === args.workspaceId)?.name;
+  if (activeWorkspaceName) {
+    return activeWorkspaceName;
+  }
+  for (const project of args.state.recentProjects) {
+    const workspaceName = project.workspaces.find((workspace) => workspace.id === args.workspaceId)?.name;
+    if (workspaceName) {
+      return workspaceName;
+    }
+  }
+  return defaultWorkspaceName;
+}
+
+function removeWorkspaceRuntimeCacheEntries(args: {
+  workspaceRuntimeCacheById: Record<string, WorkspaceSessionState>;
+  workspaceIds: string[];
+}) {
+  if (args.workspaceIds.length === 0) {
+    return args.workspaceRuntimeCacheById;
+  }
+  const ids = new Set(args.workspaceIds);
+  return Object.fromEntries(
+    Object.entries(args.workspaceRuntimeCacheById).filter(([workspaceId]) => !ids.has(workspaceId))
+  );
 }
 
 function areStringArraysEqual(left: string[], right: string[]) {
@@ -480,6 +605,26 @@ function areStringArraysEqual(left: string[], right: string[]) {
     }
   }
   return true;
+}
+
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (
+    fromIndex < 0
+    || toIndex < 0
+    || fromIndex >= items.length
+    || toIndex >= items.length
+    || fromIndex === toIndex
+  ) {
+    return items;
+  }
+
+  const next = [...items];
+  const [moved] = next.splice(fromIndex, 1);
+  if (typeof moved === "undefined") {
+    return items;
+  }
+  next.splice(toIndex, 0, moved);
+  return next;
 }
 
 function sanitizeBranchName(args: { value: string }) {
@@ -935,10 +1080,13 @@ function normalizeRecentProjectStates(args: { projects?: RecentProjectState[] | 
 }
 
 function upsertRecentProjectState(args: { projects: RecentProjectState[]; project: RecentProjectState }) {
-  const filtered = args.projects.filter((item) => item.projectPath !== args.project.projectPath);
-  return [cloneRecentProjectState(args.project), ...filtered]
-    .sort((left, right) => right.lastOpenedAt.localeCompare(left.lastOpenedAt))
-    .slice(0, MAX_RECENT_PROJECTS);
+  const nextProject = cloneRecentProjectState(args.project);
+  const existingIndex = args.projects.findIndex((item) => item.projectPath === args.project.projectPath);
+  if (existingIndex >= 0) {
+    return args.projects.map((item, index) => (index === existingIndex ? nextProject : cloneRecentProjectState(item)));
+  }
+  return [...args.projects.map((project) => cloneRecentProjectState(project)), nextProject]
+    .slice(-MAX_RECENT_PROJECTS);
 }
 
 function captureCurrentProjectState(args: {
@@ -982,6 +1130,9 @@ export const useAppStore = create<AppState>()(
       }) => {
         await get().flushActiveWorkspaceSnapshot({ sync: true });
         const stateBeforeSwitch = get();
+        const savedWorkspaceRuntimeCacheById = saveActiveWorkspaceRuntimeCache({
+          state: stateBeforeSwitch,
+        });
         const rememberedProjects = captureCurrentProjectState({
           recentProjects: stateBeforeSwitch.recentProjects,
           projectPath: stateBeforeSwitch.projectPath,
@@ -1019,6 +1170,7 @@ export const useAppStore = create<AppState>()(
             defaultBranch: args.defaultBranch,
             workspaceRootName: args.projectName,
             projectFiles: args.files.length > 0 ? args.files : state.projectFiles,
+            workspaceRuntimeCacheById: savedWorkspaceRuntimeCacheById,
           }));
           return;
         }
@@ -1053,6 +1205,7 @@ export const useAppStore = create<AppState>()(
             workspaceDefaultById: nextProject.workspaceDefaultById,
             workspaceRootName: args.projectName,
             projectFiles: args.files,
+            workspaceRuntimeCacheById: savedWorkspaceRuntimeCacheById,
             ...emptyWorkspaceState,
           }));
           await get().hydrateWorkspaces();
@@ -1109,6 +1262,12 @@ export const useAppStore = create<AppState>()(
           ...workspaceState,
           workspaceRootName: args.projectName,
           projectFiles: args.files,
+          workspaceRuntimeCacheById: savedWorkspaceRuntimeCacheById,
+          taskWorkspaceIdById: registerTaskWorkspaceOwnership({
+            taskWorkspaceIdById: stateBeforeSwitch.taskWorkspaceIdById,
+            workspaceId: nextProject.activeWorkspaceId,
+            tasks: workspaceState.tasks,
+          }),
         }));
       };
 
@@ -1137,6 +1296,7 @@ export const useAppStore = create<AppState>()(
         terminalDockHeight: 210,
         editorVisible: false,
         sidebarOverlayVisible: false,
+        sidebarOverlayTab: "explorer",
         terminalDocked: false,
         editorDiffMode: false,
       },
@@ -1147,9 +1307,19 @@ export const useAppStore = create<AppState>()(
       projectFiles: workspaceFsAdapter.getKnownFiles(),
       taskCheckpointById: {},
       providerAvailability: createDefaultProviderAvailability(),
+      skillCatalog: {
+        status: "idle",
+        workspacePath: null,
+        fetchedAt: null,
+        skills: [],
+        roots: [],
+        detail: "Skill catalog has not been loaded yet.",
+      },
       activeTurnIdsByTask: {},
       nativeConversationReadyByTask: {},
       providerConversationByTask: {},
+      workspaceRuntimeCacheById: {},
+      taskWorkspaceIdById: {},
       hydrateWorkspaces: async () => {
         let initialRows = await listWorkspaceSummaries();
         const stateBeforeHydrate = get();
@@ -1190,8 +1360,8 @@ export const useAppStore = create<AppState>()(
           workspaces: rows,
           workspaceDefaultById: stateBeforeHydrate.workspaceDefaultById,
         });
-        const importedWorktreePathById: Record<string, string> = {};
-        const importedWorktreeBranchById: Record<string, string> = {};
+        const branchById: Record<string, string> = { ...stateBeforeHydrate.workspaceBranchById };
+        const pathById: Record<string, string> = { ...stateBeforeHydrate.workspacePathById };
 
         // Worktree cleanup: remove DB workspaces whose git worktrees no longer exist
         const runner = window.api?.terminal?.runCommand;
@@ -1209,7 +1379,7 @@ export const useAppStore = create<AppState>()(
             const staleIds: string[] = [];
             for (const row of rows) {
               if (row.id === defaultWorkspaceId) continue;
-              const wsPath = stateBeforeHydrate.workspacePathById[row.id]
+              const wsPath = pathById[row.id]
                 ?? `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`;
               if (!registeredPaths.has(normalizeComparablePath(wsPath))) {
                 staleIds.push(row.id);
@@ -1222,12 +1392,20 @@ export const useAppStore = create<AppState>()(
               rows = rows.filter((row) => !staleIds.includes(row.id));
             }
 
+            for (const row of rows) {
+              const isDefault = row.id === defaultWorkspaceId;
+              if (!branchById[row.id]) {
+                branchById[row.id] = isDefault ? stateBeforeHydrate.defaultBranch : row.name;
+              }
+              if (!pathById[row.id]) {
+                pathById[row.id] = isDefault
+                  ? projectPath
+                  : `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`;
+              }
+            }
+
             const knownPaths = new Set(
-              rows
-                .map((row) => stateBeforeHydrate.workspacePathById[row.id]
-                  ?? (row.id === defaultWorkspaceId
-                    ? projectPath
-                    : `${projectPath}/.stave/workspaces/${toWorkspaceFolderName({ branch: row.name })}`))
+              Object.values(pathById)
                 .map((value) => normalizeComparablePath(value))
                 .filter(Boolean),
             );
@@ -1262,20 +1440,19 @@ export const useAppStore = create<AppState>()(
               }
 
               if (!rows.some((row) => row.id === workspaceId)) {
-                rows = [...rows, persistedWorkspace ?? { id: workspaceId, name: workspaceName, updatedAt: new Date().toISOString() }];
+                rows = [...rows, persistedWorkspace ?? {
+                  id: workspaceId,
+                  name: workspaceName,
+                  updatedAt: new Date().toISOString(),
+                }];
               }
 
-              importedWorktreeBranchById[workspaceId] = worktree.branch;
-              importedWorktreePathById[workspaceId] = worktree.path;
+              branchById[workspaceId] = worktree.branch;
+              pathById[workspaceId] = worktree.path;
               knownPaths.add(normalizedWorktreePath);
             }
           }
         }
-
-        const branchById: Record<string, string> = { ...stateBeforeHydrate.workspaceBranchById };
-        const pathById: Record<string, string> = { ...stateBeforeHydrate.workspacePathById };
-        Object.assign(branchById, importedWorktreeBranchById);
-        Object.assign(pathById, importedWorktreePathById);
 
         for (const row of rows) {
           const isDefault = row.id === defaultWorkspaceId;
@@ -1292,7 +1469,10 @@ export const useAppStore = create<AppState>()(
         const preferredWorkspaceId = rows.some((workspace) => workspace.id === stateBeforeHydrate.activeWorkspaceId)
           ? stateBeforeHydrate.activeWorkspaceId
           : (rows.find((workspace) => workspace.id === defaultWorkspaceId)?.id ?? rows[0]?.id ?? "");
-        const [snapshot, latestWorkspaceTurns] = preferredWorkspaceId
+        const cachedWorkspaceState = preferredWorkspaceId
+          ? stateBeforeHydrate.workspaceRuntimeCacheById[preferredWorkspaceId]
+          : undefined;
+        const [snapshot, latestWorkspaceTurns] = preferredWorkspaceId && !cachedWorkspaceState
           ? await Promise.all([
               loadWorkspaceSnapshot({ workspaceId: preferredWorkspaceId }),
               listLatestWorkspaceTurns({ workspaceId: preferredWorkspaceId }),
@@ -1310,11 +1490,12 @@ export const useAppStore = create<AppState>()(
         }
 
         set((state) => {
-          const workspaceState = buildWorkspaceSessionState({
-            snapshot,
-            latestTurns: latestWorkspaceTurns,
-            appendInterruptedNotices: true,
-          });
+          const workspaceState = cachedWorkspaceState
+            ?? buildWorkspaceSessionState({
+              snapshot,
+              latestTurns: latestWorkspaceTurns,
+              appendInterruptedNotices: true,
+            });
 
           return {
             hasHydratedWorkspaces: true,
@@ -1325,6 +1506,11 @@ export const useAppStore = create<AppState>()(
             workspaceBranchById: branchById,
             workspacePathById: pathById,
             projectFiles,
+            taskWorkspaceIdById: registerTaskWorkspaceOwnership({
+              taskWorkspaceIdById: state.taskWorkspaceIdById,
+              workspaceId: preferredWorkspaceId,
+              tasks: workspaceState.tasks,
+            }),
             ...workspaceState,
           };
         });
@@ -1401,6 +1587,43 @@ export const useAppStore = create<AppState>()(
           defaultBranch,
         });
       },
+      openProjectFromPath: async ({ inputPath }) => {
+        const resolvePath = window.api?.fs?.resolvePath;
+        if (!resolvePath) {
+          return { ok: false, stderr: "Filesystem bridge unavailable." };
+        }
+        const result = await resolvePath({ inputPath });
+        if (!result.ok || !result.rootPath) {
+          return { ok: false, stderr: result.stderr || "Invalid path." };
+        }
+
+        const projectRootPath = result.rootPath;
+        const projectName = result.rootName || resolveProjectNameFromPath({ projectPath: projectRootPath });
+
+        const terminalRun = window.api?.terminal?.runCommand;
+        let defaultBranch = "main";
+        if (terminalRun) {
+          const branchResult = await terminalRun({
+            cwd: projectRootPath,
+            command: "git symbolic-ref --short refs/remotes/origin/HEAD || git symbolic-ref --short HEAD || echo main",
+          });
+          const branchLine = (branchResult.stdout || "")
+            .split("\n")
+            .map((line: string) => line.trim())
+            .find((line: string) => line.length > 0);
+          if (branchLine) {
+            defaultBranch = branchLine.replace(/^origin\//, "");
+          }
+        }
+
+        await activateProject({
+          projectRootPath,
+          projectName,
+          files: result.files ?? [],
+          defaultBranch,
+        });
+        return { ok: true };
+      },
       openProject: async ({ projectPath }) => {
         const normalizedProjectPath = projectPath.trim();
         if (!normalizedProjectPath) {
@@ -1431,6 +1654,94 @@ export const useAppStore = create<AppState>()(
           defaultBranch: rememberedProject?.defaultBranch || state.defaultBranch || "main",
         });
       },
+      removeProjectFromList: async ({ projectPath }) => {
+        const normalizedProjectPath = projectPath.trim();
+        if (!normalizedProjectPath) {
+          return;
+        }
+
+        const stateBefore = get();
+        const isCurrentProject = stateBefore.projectPath === normalizedProjectPath;
+        if (isCurrentProject) {
+          await get().flushActiveWorkspaceSnapshot({ sync: true });
+        }
+
+        set((state) => {
+          const matchingProject = state.recentProjects.find((project) => project.projectPath === normalizedProjectPath);
+          const workspaceIds = new Set<string>([
+            ...(matchingProject?.workspaces.map((workspace) => workspace.id) ?? []),
+            ...(isCurrentProject ? state.workspaces.map((workspace) => workspace.id) : []),
+          ]);
+          const nextRuntimeCacheById = removeWorkspaceRuntimeCacheEntries({
+            workspaceRuntimeCacheById: state.workspaceRuntimeCacheById,
+            workspaceIds: [...workspaceIds],
+          });
+          const nextTaskWorkspaceIdById = Object.fromEntries(
+            Object.entries(state.taskWorkspaceIdById).filter(([, workspaceId]) => !workspaceIds.has(workspaceId))
+          );
+          const nextRecentProjects = state.recentProjects.filter((project) => project.projectPath !== normalizedProjectPath);
+
+          if (!isCurrentProject) {
+            return {
+              recentProjects: nextRecentProjects,
+              workspaceRuntimeCacheById: nextRuntimeCacheById,
+              taskWorkspaceIdById: nextTaskWorkspaceIdById,
+            };
+          }
+
+          const emptyWorkspaceState = buildWorkspaceSessionState({ snapshot: null });
+          return {
+            hasHydratedWorkspaces: false,
+            workspaceSnapshotVersion: 0,
+            workspaces: [],
+            activeWorkspaceId: "",
+            projectPath: null,
+            recentProjects: nextRecentProjects,
+            defaultBranch: "main",
+            workspaceBranchById: {},
+            workspacePathById: {},
+            workspaceDefaultById: {},
+            workspaceRootName: null,
+            projectFiles: [],
+            editorTabs: [],
+            activeEditorTabId: null,
+            taskCheckpointById: {},
+            workspaceRuntimeCacheById: nextRuntimeCacheById,
+            taskWorkspaceIdById: nextTaskWorkspaceIdById,
+            layout: {
+              ...state.layout,
+              editorVisible: false,
+              sidebarOverlayVisible: false,
+              terminalDocked: false,
+            },
+            ...emptyWorkspaceState,
+          };
+        });
+      },
+      moveProjectInList: ({ projectPath, direction }) => {
+        const normalizedProjectPath = projectPath.trim();
+        if (!normalizedProjectPath) {
+          return;
+        }
+
+        set((state) => {
+          const currentProjects = captureCurrentProjectState({
+            recentProjects: state.recentProjects,
+            projectPath: state.projectPath,
+            workspaceRootName: state.workspaceRootName,
+            defaultBranch: state.defaultBranch,
+            workspaces: state.workspaces,
+            activeWorkspaceId: state.activeWorkspaceId,
+            workspaceBranchById: state.workspaceBranchById,
+            workspacePathById: state.workspacePathById,
+            workspaceDefaultById: state.workspaceDefaultById,
+          });
+          const fromIndex = currentProjects.findIndex((project) => project.projectPath === normalizedProjectPath);
+          const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
+          const nextProjects = moveArrayItem(currentProjects, fromIndex, toIndex);
+          return nextProjects === currentProjects ? state : { recentProjects: nextProjects };
+        });
+      },
       createWorkspace: async ({ name, mode, fromBranch, initCommand }) => {
         const trimmed = name.trim();
         if (!trimmed) {
@@ -1441,28 +1752,7 @@ export const useAppStore = create<AppState>()(
         if (!current.projectPath) {
           return { ok: false, message: "Open a project before creating a workspace." };
         }
-        const hasActiveWorkspace = current.workspaces.some((workspace) => workspace.id === current.activeWorkspaceId);
-        if (hasActiveWorkspace && current.activeWorkspaceId) {
-          const currentName = current.workspaces.find((workspace) => workspace.id === current.activeWorkspaceId)?.name ?? defaultWorkspaceName;
-          await interruptWorkspaceTurnsBeforeTransition({
-            activeWorkspaceId: current.activeWorkspaceId,
-            activeTaskId: current.activeTaskId,
-            tasks: current.tasks,
-            messagesByTask: current.messagesByTask,
-            promptDraftByTask: current.promptDraftByTask,
-            activeTurnIdsByTask: current.activeTurnIdsByTask,
-            providerConversationByTask: current.providerConversationByTask,
-            workspaceName: currentName,
-            applyInterruptedState: ({ messagesByTask, activeTurnIdsByTask }) => {
-              useAppStore.setState((state) => ({
-                messagesByTask: messagesByTask === state.messagesByTask ? state.messagesByTask : messagesByTask,
-                activeTurnIdsByTask: activeTurnIdsByTask === state.activeTurnIdsByTask
-                  ? state.activeTurnIdsByTask
-                  : activeTurnIdsByTask,
-              }));
-            },
-          });
-        }
+        const nextRuntimeCacheById = saveActiveWorkspaceRuntimeCache({ state: current });
 
         const workspaceId = crypto.randomUUID();
         const branchName = sanitizeBranchName({ value: trimmed });
@@ -1582,6 +1872,12 @@ export const useAppStore = create<AppState>()(
             ...state.workspaceDefaultById,
             [workspaceId]: false,
           },
+          workspaceRuntimeCacheById: nextRuntimeCacheById,
+          taskWorkspaceIdById: registerTaskWorkspaceOwnership({
+            taskWorkspaceIdById: state.taskWorkspaceIdById,
+            workspaceId,
+            tasks: workspaceState.tasks,
+          }),
           ...workspaceState,
           projectFiles: files,
         }));
@@ -1618,6 +1914,13 @@ export const useAppStore = create<AppState>()(
             delete nextBranchById[workspaceId];
             delete nextPathById[workspaceId];
             delete nextDefaultById[workspaceId];
+            const nextRuntimeCacheById = removeWorkspaceRuntimeCacheEntries({
+              workspaceRuntimeCacheById: nextState.workspaceRuntimeCacheById,
+              workspaceIds: [workspaceId],
+            });
+            const nextTaskWorkspaceIdById = Object.fromEntries(
+              Object.entries(nextState.taskWorkspaceIdById).filter(([, ownerWorkspaceId]) => ownerWorkspaceId !== workspaceId)
+            );
             return {
               workspaces: nextState.workspaces.filter((item) => item.id !== workspaceId),
               workspaceBranchById: nextBranchById,
@@ -1625,6 +1928,8 @@ export const useAppStore = create<AppState>()(
               workspaceDefaultById: nextDefaultById,
               activeWorkspaceId: "",
               workspaceSnapshotVersion: 0,
+              workspaceRuntimeCacheById: nextRuntimeCacheById,
+              taskWorkspaceIdById: nextTaskWorkspaceIdById,
               ...workspaceState,
             };
           });
@@ -1638,40 +1943,32 @@ export const useAppStore = create<AppState>()(
           delete nextBranchById[workspaceId];
           delete nextPathById[workspaceId];
           delete nextDefaultById[workspaceId];
+          const nextRuntimeCacheById = removeWorkspaceRuntimeCacheEntries({
+            workspaceRuntimeCacheById: nextState.workspaceRuntimeCacheById,
+            workspaceIds: [workspaceId],
+          });
+          const nextTaskWorkspaceIdById = Object.fromEntries(
+            Object.entries(nextState.taskWorkspaceIdById).filter(([, ownerWorkspaceId]) => ownerWorkspaceId !== workspaceId)
+          );
           return {
             workspaces: nextState.workspaces.filter((item) => item.id !== workspaceId),
             workspaceBranchById: nextBranchById,
             workspacePathById: nextPathById,
             workspaceDefaultById: nextDefaultById,
+            workspaceRuntimeCacheById: nextRuntimeCacheById,
+            taskWorkspaceIdById: nextTaskWorkspaceIdById,
           };
         });
       },
       switchWorkspace: async ({ workspaceId }) => {
         const current = get();
-        const hasActiveWorkspace = current.workspaces.some((workspace) => workspace.id === current.activeWorkspaceId);
-        if (hasActiveWorkspace && current.activeWorkspaceId) {
-          const currentName = current.workspaces.find((workspace) => workspace.id === current.activeWorkspaceId)?.name ?? defaultWorkspaceName;
-          await interruptWorkspaceTurnsBeforeTransition({
-            activeWorkspaceId: current.activeWorkspaceId,
-            activeTaskId: current.activeTaskId,
-            tasks: current.tasks,
-            messagesByTask: current.messagesByTask,
-            promptDraftByTask: current.promptDraftByTask,
-            activeTurnIdsByTask: current.activeTurnIdsByTask,
-            providerConversationByTask: current.providerConversationByTask,
-            workspaceName: currentName,
-            applyInterruptedState: ({ messagesByTask, activeTurnIdsByTask }) => {
-              useAppStore.setState((state) => ({
-                messagesByTask: messagesByTask === state.messagesByTask ? state.messagesByTask : messagesByTask,
-                activeTurnIdsByTask: activeTurnIdsByTask === state.activeTurnIdsByTask
-                  ? state.activeTurnIdsByTask
-                  : activeTurnIdsByTask,
-              }));
-            },
-          });
+        if (workspaceId === current.activeWorkspaceId) {
+          return;
         }
 
-        const nextSnapshot = await loadWorkspaceSnapshot({ workspaceId });
+        const nextSnapshot = current.workspaceRuntimeCacheById[workspaceId]
+          ? null
+          : await loadWorkspaceSnapshot({ workspaceId });
         const workspacePath = current.workspacePathById[workspaceId];
         if (workspacePath) {
           await workspaceFsAdapter.setRoot?.({
@@ -1681,15 +1978,84 @@ export const useAppStore = create<AppState>()(
         }
         const files = await workspaceFsAdapter.listFiles();
         const nextWorkspaces = current.workspaces;
-        const workspaceState = buildWorkspaceSessionState({ snapshot: nextSnapshot });
+        const workspaceState = current.workspaceRuntimeCacheById[workspaceId]
+          ?? buildWorkspaceSessionState({ snapshot: nextSnapshot });
+        const nextRuntimeCacheById = saveActiveWorkspaceRuntimeCache({ state: current });
 
         set((state) => {
           return {
             workspaces: nextWorkspaces.length > 0 ? nextWorkspaces : state.workspaces,
             activeWorkspaceId: workspaceId,
             workspaceSnapshotVersion: 0,
+            workspaceRuntimeCacheById: nextRuntimeCacheById,
+            taskWorkspaceIdById: registerTaskWorkspaceOwnership({
+              taskWorkspaceIdById: state.taskWorkspaceIdById,
+              workspaceId,
+              tasks: workspaceState.tasks,
+            }),
             ...workspaceState,
             projectFiles: files,
+          };
+        });
+      },
+      moveWorkspaceInProjectList: ({ projectPath, workspaceId, direction }) => {
+        const normalizedProjectPath = projectPath.trim();
+        const normalizedWorkspaceId = workspaceId.trim();
+        if (!normalizedProjectPath || !normalizedWorkspaceId) {
+          return;
+        }
+
+        set((state) => {
+          const indexDelta = direction === "up" ? -1 : 1;
+
+          if (state.projectPath === normalizedProjectPath) {
+            const fromIndex = state.workspaces.findIndex((workspace) => workspace.id === normalizedWorkspaceId);
+            const nextWorkspaces = moveArrayItem(state.workspaces, fromIndex, fromIndex + indexDelta);
+            if (nextWorkspaces === state.workspaces) {
+              return state;
+            }
+
+            return {
+              workspaces: nextWorkspaces,
+              recentProjects: upsertRecentProjectState({
+                projects: state.recentProjects,
+                project: {
+                  projectPath: normalizedProjectPath,
+                  projectName: state.workspaceRootName ?? "project",
+                  lastOpenedAt: state.recentProjects.find((project) => project.projectPath === normalizedProjectPath)?.lastOpenedAt
+                    ?? new Date().toISOString(),
+                  defaultBranch: state.defaultBranch,
+                  workspaces: nextWorkspaces,
+                  activeWorkspaceId: state.activeWorkspaceId,
+                  workspaceBranchById: state.workspaceBranchById,
+                  workspacePathById: state.workspacePathById,
+                  workspaceDefaultById: state.workspaceDefaultById,
+                },
+              }),
+            };
+          }
+
+          const projectIndex = state.recentProjects.findIndex((project) => project.projectPath === normalizedProjectPath);
+          const project = projectIndex >= 0 ? state.recentProjects[projectIndex] : null;
+          if (!project) {
+            return state;
+          }
+
+          const fromIndex = project.workspaces.findIndex((workspace) => workspace.id === normalizedWorkspaceId);
+          const nextWorkspaces = moveArrayItem(project.workspaces, fromIndex, fromIndex + indexDelta);
+          if (nextWorkspaces === project.workspaces) {
+            return state;
+          }
+
+          const nextProject = {
+            ...cloneRecentProjectState(project),
+            workspaces: nextWorkspaces,
+          } satisfies RecentProjectState;
+
+          return {
+            recentProjects: state.recentProjects.map((item, index) => (
+              index === projectIndex ? nextProject : cloneRecentProjectState(item)
+            )),
           };
         });
       },
@@ -1849,6 +2215,10 @@ export const useAppStore = create<AppState>()(
             providerConversationByTask: {
               ...state.providerConversationByTask,
             },
+            taskWorkspaceIdById: {
+              ...state.taskWorkspaceIdById,
+              [nextTask.id]: state.activeWorkspaceId,
+            },
             workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
           };
         });
@@ -1870,6 +2240,27 @@ export const useAppStore = create<AppState>()(
           ),
           workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
         }));
+      },
+      restoreTask: ({ taskId }) => {
+        set((state) => {
+          const targetTask = state.tasks.find((task) => task.id === taskId);
+          if (!targetTask || !isTaskArchived(targetTask)) {
+            return {};
+          }
+          return {
+            tasks: state.tasks.map((task) =>
+              task.id === taskId
+                ? {
+                    ...task,
+                    archivedAt: null,
+                    updatedAt: buildRecentTimestamp(),
+                  }
+                : task
+            ),
+            activeTaskId: taskId,
+            workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
+          };
+        });
       },
       duplicateTask: ({ taskId }) => {
         set((state) => {
@@ -1910,6 +2301,27 @@ export const useAppStore = create<AppState>()(
             providerConversationByTask: {
               ...state.providerConversationByTask,
             },
+            taskWorkspaceIdById: {
+              ...state.taskWorkspaceIdById,
+              [duplicatedTask.id]: state.activeWorkspaceId,
+            },
+            workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
+          };
+        });
+      },
+      reorderTasks: ({ activeTaskId, overTaskId, filter }) => {
+        set((state) => {
+          const nextTasks = reorderTasksWithinFilter({
+            tasks: state.tasks,
+            activeTaskId,
+            overTaskId,
+            filter,
+          });
+          if (nextTasks === state.tasks) {
+            return {};
+          }
+          return {
+            tasks: nextTasks,
             workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(state),
           };
         });
@@ -2131,6 +2543,65 @@ export const useAppStore = create<AppState>()(
           providerAvailability,
         }));
       },
+      refreshSkillCatalog: async (args = {}) => {
+        const getCatalog = window.api?.skills?.getCatalog;
+        const fallbackWorkspacePath = get().workspacePathById[get().activeWorkspaceId] ?? get().projectPath ?? null;
+        const workspacePath = args.workspacePath === undefined
+          ? fallbackWorkspacePath
+          : args.workspacePath;
+
+        if (!getCatalog) {
+          set(() => ({
+            skillCatalog: {
+              status: "error",
+              workspacePath,
+              fetchedAt: new Date().toISOString(),
+              skills: [],
+              roots: [],
+              detail: "Skill catalog API is unavailable in this build.",
+            },
+          }));
+          return;
+        }
+
+        set((state) => ({
+          skillCatalog: {
+            ...state.skillCatalog,
+            status: "loading",
+            workspacePath,
+            detail: "Loading skill catalog...",
+          },
+        }));
+
+        try {
+          const result = await getCatalog({
+            ...(workspacePath ? { workspacePath } : {}),
+          });
+          set(() => ({
+            skillCatalog: {
+              status: result.ok ? "ready" : "error",
+              workspacePath: result.catalog.workspacePath,
+              fetchedAt: result.catalog.fetchedAt,
+              skills: result.catalog.skills,
+              roots: result.catalog.roots,
+              detail: result.ok
+                ? result.catalog.detail
+                : result.message?.trim() || result.catalog.detail,
+            },
+          }));
+        } catch (error) {
+          set(() => ({
+            skillCatalog: {
+              status: "error",
+              workspacePath,
+              fetchedAt: new Date().toISOString(),
+              skills: [],
+              roots: [],
+              detail: String(error),
+            },
+          }));
+        }
+      },
       sendUserMessage: ({ taskId, content, fileContexts, imageContexts }) => {
         const turnId = crypto.randomUUID();
         let state = get();
@@ -2138,7 +2609,12 @@ export const useAppStore = create<AppState>()(
         let task = state.tasks.find((item) => item.id === resolvedTaskId);
         if (!task) {
           const seededTaskId = crypto.randomUUID();
-          const seededTitle = content.split("\n")[0]?.trim().slice(0, 48) || "New Task";
+          const seededTitleText = resolveSkillSelections({
+            text: content,
+            skills: state.skillCatalog.skills,
+            providerId: state.draftProvider,
+          }).normalizedText;
+          const seededTitle = seededTitleText.split("\n")[0]?.trim().slice(0, 48) || "New Task";
           const seededTask: Task = {
             id: seededTaskId,
             title: seededTitle,
@@ -2154,6 +2630,10 @@ export const useAppStore = create<AppState>()(
               ...nextState.messagesByTask,
               [seededTaskId]: nextState.messagesByTask[seededTaskId] ?? [],
             },
+            taskWorkspaceIdById: {
+              ...nextState.taskWorkspaceIdById,
+              [seededTaskId]: nextState.activeWorkspaceId,
+            },
             workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(nextState),
           }));
           state = get();
@@ -2161,6 +2641,7 @@ export const useAppStore = create<AppState>()(
           task = seededTask;
         }
         const provider = task?.provider ?? state.draftProvider ?? "claude-code";
+        const taskWorkspaceId = state.taskWorkspaceIdById[resolvedTaskId] ?? state.activeWorkspaceId;
         const workspaceCwd = state.workspacePathById[state.activeWorkspaceId] || state.projectPath || undefined;
         const runCommand = window.api?.terminal?.runCommand;
 
@@ -2266,6 +2747,10 @@ export const useAppStore = create<AppState>()(
                     Object.entries(nextState.providerConversationByTask).filter(([key]) => key !== resolvedTaskId)
                   )
                 : nextState.providerConversationByTask,
+              taskWorkspaceIdById: {
+                ...nextState.taskWorkspaceIdById,
+                [resolvedTaskId]: taskWorkspaceId,
+              },
               workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(nextState),
             };
           });
@@ -2276,6 +2761,13 @@ export const useAppStore = create<AppState>()(
         }
         // ── End slash-command interception ────────────────────────────────
 
+        const skillSelection = resolveSkillSelections({
+          text: content,
+          skills: state.skillCatalog.skills,
+          providerId: provider,
+        });
+        const normalizedPrompt = skillSelection.normalizedText;
+
         const providerConversation = state.providerConversationByTask[resolvedTaskId];
         const conversation = buildCanonicalConversationRequest({
           turnId,
@@ -2284,13 +2776,14 @@ export const useAppStore = create<AppState>()(
           providerId: provider,
           model: activeModel,
           history: existingHistory,
-          userInput: content,
+          userInput: normalizedPrompt,
           mode: "chat",
           fileContexts,
           imageContexts,
+          skillContexts: skillSelection.selectedSkills,
           nativeConversationId: providerConversation?.[provider] ?? null,
         });
-        const prompt = content;
+        const prompt = normalizedPrompt;
 
         set((nextState) => {
           const current = nextState.messagesByTask[resolvedTaskId] ?? [];
@@ -2358,6 +2851,10 @@ export const useAppStore = create<AppState>()(
               ...nextState.activeTurnIdsByTask,
               [resolvedTaskId]: turnId,
             },
+            taskWorkspaceIdById: {
+              ...nextState.taskWorkspaceIdById,
+              [resolvedTaskId]: taskWorkspaceId,
+            },
             workspaceSnapshotVersion: incrementWorkspaceSnapshotVersion(nextState),
           };
         });
@@ -2400,30 +2897,101 @@ export const useAppStore = create<AppState>()(
           }
 
           const pendingEvents = queuedEvents.splice(0, queuedEvents.length);
+          let persistInactiveWorkspaceSession: { workspaceId: string; session: WorkspaceSessionState } | null = null;
 
           set((nextState) => {
-            const activeTurnId = nextState.activeTurnIdsByTask[resolvedTaskId];
+            const isActiveWorkspaceTarget = taskWorkspaceId === nextState.activeWorkspaceId;
+            if (isActiveWorkspaceTarget) {
+              const activeTurnId = nextState.activeTurnIdsByTask[resolvedTaskId];
+              if (activeTurnId !== turnId) {
+                return {};
+              }
+
+              const replayed = replayProviderEventsToTaskState({
+                taskId: resolvedTaskId,
+                messages: nextState.messagesByTask[resolvedTaskId] ?? [],
+                events: pendingEvents,
+                provider,
+                model: activeModel,
+                turnId,
+                nativeConversationReady: nextState.nativeConversationReadyByTask[resolvedTaskId],
+                providerConversation: nextState.providerConversationByTask[resolvedTaskId],
+              });
+
+              const activeTurnMatches = nextState.activeTurnIdsByTask[resolvedTaskId] === replayed.activeTurnId;
+              const nativeConversationReadyMatches =
+                nextState.nativeConversationReadyByTask[resolvedTaskId] === replayed.nativeConversationReady;
+              const providerConversationMatches =
+                replayed.providerConversation === undefined
+                || nextState.providerConversationByTask[resolvedTaskId] === replayed.providerConversation;
+
+              if (
+                !replayed.changed
+                && activeTurnMatches
+                && nativeConversationReadyMatches
+                && providerConversationMatches
+              ) {
+                return {};
+              }
+
+              return {
+                messagesByTask: replayed.changed
+                  ? {
+                      ...nextState.messagesByTask,
+                      [resolvedTaskId]: replayed.messages,
+                    }
+                  : nextState.messagesByTask,
+                activeTurnIdsByTask: activeTurnMatches
+                  ? nextState.activeTurnIdsByTask
+                  : {
+                      ...nextState.activeTurnIdsByTask,
+                      [resolvedTaskId]: replayed.activeTurnId,
+                    },
+                nativeConversationReadyByTask: nativeConversationReadyMatches
+                  ? nextState.nativeConversationReadyByTask
+                  : {
+                      ...nextState.nativeConversationReadyByTask,
+                      [resolvedTaskId]: replayed.nativeConversationReady,
+                    },
+                providerConversationByTask: providerConversationMatches
+                  ? nextState.providerConversationByTask
+                  : {
+                      ...nextState.providerConversationByTask,
+                      [resolvedTaskId]: replayed.providerConversation!,
+                    },
+                workspaceSnapshotVersion: replayed.changed || !providerConversationMatches
+                  ? incrementWorkspaceSnapshotVersion(nextState)
+                  : nextState.workspaceSnapshotVersion,
+              };
+            }
+
+            const workspaceSession = nextState.workspaceRuntimeCacheById[taskWorkspaceId];
+            if (!workspaceSession) {
+              return {};
+            }
+
+            const activeTurnId = workspaceSession.activeTurnIdsByTask[resolvedTaskId];
             if (activeTurnId !== turnId) {
               return {};
             }
 
             const replayed = replayProviderEventsToTaskState({
               taskId: resolvedTaskId,
-              messages: nextState.messagesByTask[resolvedTaskId] ?? [],
+              messages: workspaceSession.messagesByTask[resolvedTaskId] ?? [],
               events: pendingEvents,
               provider,
               model: activeModel,
               turnId,
-              nativeConversationReady: nextState.nativeConversationReadyByTask[resolvedTaskId],
-              providerConversation: nextState.providerConversationByTask[resolvedTaskId],
+              nativeConversationReady: workspaceSession.nativeConversationReadyByTask[resolvedTaskId],
+              providerConversation: workspaceSession.providerConversationByTask[resolvedTaskId],
             });
 
-            const activeTurnMatches = nextState.activeTurnIdsByTask[resolvedTaskId] === replayed.activeTurnId;
+            const activeTurnMatches = workspaceSession.activeTurnIdsByTask[resolvedTaskId] === replayed.activeTurnId;
             const nativeConversationReadyMatches =
-              nextState.nativeConversationReadyByTask[resolvedTaskId] === replayed.nativeConversationReady;
+              workspaceSession.nativeConversationReadyByTask[resolvedTaskId] === replayed.nativeConversationReady;
             const providerConversationMatches =
               replayed.providerConversation === undefined
-              || nextState.providerConversationByTask[resolvedTaskId] === replayed.providerConversation;
+              || workspaceSession.providerConversationByTask[resolvedTaskId] === replayed.providerConversation;
 
             if (
               !replayed.changed
@@ -2434,36 +3002,67 @@ export const useAppStore = create<AppState>()(
               return {};
             }
 
-            return {
+            const nextWorkspaceSession: WorkspaceSessionState = {
+              ...workspaceSession,
               messagesByTask: replayed.changed
                 ? {
-                    ...nextState.messagesByTask,
+                    ...workspaceSession.messagesByTask,
                     [resolvedTaskId]: replayed.messages,
                   }
-                : nextState.messagesByTask,
+                : workspaceSession.messagesByTask,
               activeTurnIdsByTask: activeTurnMatches
-                ? nextState.activeTurnIdsByTask
+                ? workspaceSession.activeTurnIdsByTask
                 : {
-                    ...nextState.activeTurnIdsByTask,
+                    ...workspaceSession.activeTurnIdsByTask,
                     [resolvedTaskId]: replayed.activeTurnId,
                   },
               nativeConversationReadyByTask: nativeConversationReadyMatches
-                ? nextState.nativeConversationReadyByTask
+                ? workspaceSession.nativeConversationReadyByTask
                 : {
-                    ...nextState.nativeConversationReadyByTask,
+                    ...workspaceSession.nativeConversationReadyByTask,
                     [resolvedTaskId]: replayed.nativeConversationReady,
                   },
               providerConversationByTask: providerConversationMatches
-                ? nextState.providerConversationByTask
+                ? workspaceSession.providerConversationByTask
                 : {
-                    ...nextState.providerConversationByTask,
+                    ...workspaceSession.providerConversationByTask,
                     [resolvedTaskId]: replayed.providerConversation!,
                   },
-              workspaceSnapshotVersion: replayed.changed || !providerConversationMatches
-                ? incrementWorkspaceSnapshotVersion(nextState)
-                : nextState.workspaceSnapshotVersion,
+            };
+
+            if (replayed.activeTurnId === undefined) {
+              persistInactiveWorkspaceSession = {
+                workspaceId: taskWorkspaceId,
+                session: nextWorkspaceSession,
+              };
+            }
+
+            return {
+              workspaceRuntimeCacheById: {
+                ...nextState.workspaceRuntimeCacheById,
+                [taskWorkspaceId]: nextWorkspaceSession,
+              },
             };
           });
+          const persistedInactiveWorkspaceSession = persistInactiveWorkspaceSession as {
+            workspaceId: string;
+            session: WorkspaceSessionState;
+          } | null;
+          if (persistedInactiveWorkspaceSession !== null) {
+            const latestState = get();
+            void persistWorkspaceSnapshot({
+              workspaceId: persistedInactiveWorkspaceSession.workspaceId,
+              workspaceName: resolveWorkspaceName({
+                state: latestState,
+                workspaceId: persistedInactiveWorkspaceSession.workspaceId,
+              }),
+              activeTaskId: persistedInactiveWorkspaceSession.session.activeTaskId,
+              tasks: persistedInactiveWorkspaceSession.session.tasks,
+              messagesByTask: persistedInactiveWorkspaceSession.session.messagesByTask,
+              promptDraftByTask: persistedInactiveWorkspaceSession.session.promptDraftByTask,
+              providerConversationByTask: persistedInactiveWorkspaceSession.session.providerConversationByTask,
+            });
+          }
         };
 
         runProviderTurn({
@@ -2472,8 +3071,8 @@ export const useAppStore = create<AppState>()(
           prompt,
           conversation,
           taskId: resolvedTaskId,
-          workspaceId: get().activeWorkspaceId,
-          cwd: get().workspacePathById[get().activeWorkspaceId] ?? get().projectPath ?? undefined,
+          workspaceId: taskWorkspaceId,
+          cwd: workspaceCwd,
           runtimeOptions: {
             model: activeModel,
             chatStreamingEnabled: get().settings.chatStreamingEnabled,

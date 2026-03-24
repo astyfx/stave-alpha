@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { CanonicalConversationRequest } from "../src/lib/providers/provider.types";
+import type { SkillCatalogResponse } from "../src/lib/skills/types";
 
 type ProviderId = "claude-code" | "codex";
 
@@ -166,13 +167,19 @@ contextBridge.exposeInMainWorld("api", {
   },
   fs: {
     pickRoot: () => ipcRenderer.invoke("fs:pick-root"),
+    resolvePath: (args: { inputPath: string }) => ipcRenderer.invoke("fs:resolve-path", args),
     listFiles: (args: { rootPath: string }) => ipcRenderer.invoke("fs:list-files", args),
+    listDirectory: (args: { rootPath: string; directoryPath?: string }) => ipcRenderer.invoke("fs:list-directory", args),
     readFile: (args: { rootPath: string; filePath: string }) => ipcRenderer.invoke("fs:read-file", args),
     readFileDataUrl: (args: { rootPath: string; filePath: string }) => ipcRenderer.invoke("fs:read-file-data-url", args),
     writeFile: (args: { rootPath: string; filePath: string; content: string; expectedRevision?: string | null }) =>
       ipcRenderer.invoke("fs:write-file", args),
     readTypeDefs: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-type-defs", args),
     readSourceFiles: (args: { rootPath: string }) => ipcRenderer.invoke("fs:read-source-files", args),
+  },
+  skills: {
+    getCatalog: (args?: { workspacePath?: string }) =>
+      ipcRenderer.invoke("skills:get-catalog", args ?? {}) as Promise<SkillCatalogResponse>,
   },
   lsp: {
     syncDocument: (args: {

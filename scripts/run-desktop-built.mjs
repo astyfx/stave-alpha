@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(scriptDir, "..");
 const productName = "Stave";
 
 export function shouldRunPackagedDesktopApp(args = {}) {
@@ -81,27 +83,41 @@ export function findMacAppBinary(args) {
   return null;
 }
 
+export function findMacAppBundle(args) {
+  const releaseRoot = args.releaseRoot;
+  if (!existsSync(releaseRoot)) {
+    return null;
+  }
+
+  const appBundleDirectories = collectAppBundleDirectories({
+    rootDirectory: releaseRoot,
+    maxDepth: 3,
+  }).sort((left, right) => left.localeCompare(right));
+
+  return appBundleDirectories.find((appBundlePath) => {
+    const binaryPath = path.join(appBundlePath, "Contents", "MacOS", args.productName);
+    return existsSync(binaryPath) && statSync(binaryPath).isFile();
+  }) ?? null;
+}
+
 async function runPackagedMacApp() {
   await spawnCommand({
     command: resolveLocalBin("electron-builder"),
     args: ["--config", "electron-builder.yml", "--dir"],
   });
 
-  const appBinaryPath = findMacAppBinary({
+  const appBundlePath = findMacAppBundle({
     releaseRoot: path.join(repoRoot, "release"),
     productName,
   });
 
-  if (!appBinaryPath) {
-    throw new Error("Unable to locate the unpacked Stave.app binary under release/ after electron-builder --dir.");
+  if (!appBundlePath) {
+    throw new Error("Unable to locate the unpacked Stave.app bundle under release/ after electron-builder --dir.");
   }
 
   await spawnCommand({
-    command: appBinaryPath,
-    env: {
-      ...process.env,
-      STAVE_RUNTIME_PROFILE: "production",
-    },
+    command: "open",
+    args: ["-n", appBundlePath],
   });
 }
 

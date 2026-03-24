@@ -9,17 +9,20 @@ import {
   FolderOpen,
   FolderTree,
   GitBranch,
+  LoaderCircle,
   RefreshCcw,
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Button, Input, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
+import { workspaceFsAdapter } from "@/lib/fs";
+import type { WorkspaceDirectoryEntry } from "@/lib/fs/fs.types";
 import { parseUnifiedDiffToBuffers } from "@/lib/source-control-diff";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
-import { buildExplorerIndex, collectAncestorFolders, normalizeRelativeInputPath, type ExplorerNode } from "./editor-panel.utils";
+import { collectAncestorFolders, normalizeRelativeInputPath } from "./editor-panel.utils";
 
 interface SourceControlItem {
   code: string;
@@ -32,22 +35,31 @@ interface SourceControlHistoryItem {
   subject: string;
 }
 
+interface ExplorerDirectoryState {
+  entries: WorkspaceDirectoryEntry[];
+  status: "loading" | "ready" | "error";
+  error?: string;
+}
+
 function ExplorerTreeRow(args: {
-  node: ExplorerNode;
+  entry: WorkspaceDirectoryEntry;
   depth: number;
   expanded: Set<string>;
+  directoryStateByPath: Record<string, ExplorerDirectoryState>;
   onToggle: (path: string) => void;
   onOpenFile: (path: string) => void;
 }) {
-  const { node, depth, expanded, onToggle, onOpenFile } = args;
-  const isFolder = node.type === "folder";
-  const isOpen = isFolder && expanded.has(node.path);
+  const { entry, depth, expanded, directoryStateByPath, onToggle, onOpenFile } = args;
+  const isFolder = entry.type === "folder";
+  const isOpen = isFolder && expanded.has(entry.path);
+  const directoryState = isFolder ? directoryStateByPath[entry.path] : undefined;
+  const childEntries = directoryState?.entries ?? [];
 
   return (
     <div>
       <button
         type="button"
-        onClick={() => (isFolder ? onToggle(node.path) : onOpenFile(node.path))}
+        onClick={() => (isFolder ? onToggle(entry.path) : onOpenFile(entry.path))}
         className="flex min-w-0 w-full items-center gap-1 rounded-sm px-1.5 py-1 text-left text-sm hover:bg-secondary/60"
         style={{ paddingLeft: `${6 + depth * 14}px` }}
       >
@@ -62,40 +74,60 @@ function ExplorerTreeRow(args: {
             <span className="inline-block size-1.5 rounded-full bg-muted-foreground/70" />
           </>
         )}
-        <span className="min-w-0 flex-1 truncate">{node.name}</span>
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        {isFolder && directoryState?.status === "loading" ? <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
       </button>
-      {isFolder && isOpen
-        ? node.children.map((child) => (
-          <ExplorerTreeRow
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            expanded={expanded}
-            onToggle={onToggle}
-            onOpenFile={onOpenFile}
-          />
-        ))
-        : null}
+      {isFolder && isOpen ? (
+        <>
+          {directoryState?.status === "error" ? (
+            <p
+              className="py-1 text-sm text-destructive"
+              style={{ paddingLeft: `${24 + depth * 14}px` }}
+            >
+              {directoryState.error ?? "Failed to load folder."}
+            </p>
+          ) : null}
+          {directoryState?.status === "ready" && childEntries.length === 0 ? (
+            <p
+              className="py-1 text-sm text-muted-foreground"
+              style={{ paddingLeft: `${24 + depth * 14}px` }}
+            >
+              Empty
+            </p>
+          ) : null}
+          {childEntries.map((child) => (
+            <ExplorerTreeRow
+              key={child.path}
+              entry={child}
+              depth={depth + 1}
+              expanded={expanded}
+              directoryStateByPath={directoryStateByPath}
+              onToggle={onToggle}
+              onOpenFile={onOpenFile}
+            />
+          ))}
+        </>
+      ) : null}
     </div>
   );
 }
 
 export function EditorPanel() {
   const [
-    projectFiles,
     activeWorkspaceId,
     workspaceRootName,
     sidebarOverlayVisible,
+    sidebarOverlayTab,
     workspaceCwd,
     openFileFromTree,
     openDiffInEditor,
     setLayout,
     refreshProjectFiles,
   ] = useAppStore(useShallow((state) => [
-    state.projectFiles,
     state.activeWorkspaceId,
     state.workspaceRootName,
     state.layout.sidebarOverlayVisible,
+    state.layout.sidebarOverlayTab,
     state.workspacePathById[state.activeWorkspaceId] ?? state.projectPath ?? undefined,
     state.openFileFromTree,
     state.openDiffInEditor,
@@ -103,9 +135,8 @@ export function EditorPanel() {
     state.refreshProjectFiles,
   ] as const));
 
-  const [rightTab, setRightTab] = useState<"explorer" | "changes">("explorer");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-  const [didInitExpandedFolders, setDidInitExpandedFolders] = useState(false);
+  const [explorerDirectoryStateByPath, setExplorerDirectoryStateByPath] = useState<Record<string, ExplorerDirectoryState>>({});
   const [explorerError, setExplorerError] = useState("");
   const [commitMessage, setCommitMessage] = useState("");
 
@@ -115,39 +146,118 @@ export function EditorPanel() {
   const [sourceError, setSourceError] = useState("");
   const [hasConflicts, setHasConflicts] = useState(false);
   const [isScmBusy, setIsScmBusy] = useState(false);
+  const explorerDirectoryStateRef = useRef<Record<string, ExplorerDirectoryState>>({});
+  const explorerRequestTokenRef = useRef(0);
   const selectedDiffRequestIdRef = useRef(0);
 
-  const explorerIndex = useMemo(() => buildExplorerIndex({ files: projectFiles }), [projectFiles]);
-  const explorerTree = explorerIndex.tree;
+  const explorerRootState = explorerDirectoryStateByPath[""];
+  const explorerTree = explorerRootState?.entries ?? [];
+  const isExplorerLoading = explorerRootState?.status === "loading";
   const filteredScmItems = sourceItems;
   const explorerProjectName = workspaceRootName?.trim() || "Project";
+  const rightTab = sidebarOverlayTab;
 
-  useEffect(() => {
-    if (didInitExpandedFolders) {
+  function updateExplorerDirectoryState(
+    updater: Record<string, ExplorerDirectoryState> | ((current: Record<string, ExplorerDirectoryState>) => Record<string, ExplorerDirectoryState>),
+  ) {
+    setExplorerDirectoryStateByPath((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      explorerDirectoryStateRef.current = next;
+      return next;
+    });
+  }
+
+  async function loadExplorerDirectory(args: { directoryPath: string; force?: boolean }) {
+    if (!workspaceCwd) {
+      setExplorerError("Workspace path unavailable.");
+      return null;
+    }
+
+    const cached = explorerDirectoryStateRef.current[args.directoryPath];
+    if (!args.force && cached) {
+      if (cached.status === "ready" || cached.status === "loading") {
+        return cached.entries;
+      }
+    }
+
+    const requestToken = explorerRequestTokenRef.current;
+    updateExplorerDirectoryState((current) => ({
+      ...current,
+      [args.directoryPath]: {
+        entries: cached?.entries ?? [],
+        status: "loading",
+      },
+    }));
+
+    const entries = await workspaceFsAdapter.listDirectory({ directoryPath: args.directoryPath });
+    if (explorerRequestTokenRef.current !== requestToken) {
+      return null;
+    }
+    if (!entries) {
+      updateExplorerDirectoryState((current) => ({
+        ...current,
+        [args.directoryPath]: {
+          entries: cached?.entries ?? [],
+          status: "error",
+          error: "Failed to load folder.",
+        },
+      }));
+      if (args.directoryPath === "") {
+        setExplorerError("Failed to load explorer contents.");
+      }
+      return null;
+    }
+
+    updateExplorerDirectoryState((current) => ({
+      ...current,
+      [args.directoryPath]: {
+        entries,
+        status: "ready",
+      },
+    }));
+    if (args.directoryPath === "") {
+      setExplorerError("");
+    }
+    return entries;
+  }
+
+  async function reloadExplorer(args?: { expandedPaths?: Iterable<string> }) {
+    const nextExpandedPaths = Array.from(new Set(
+      Array.from(args?.expandedPaths ?? expandedFolders).filter((path) => path.length > 0),
+    ));
+    explorerRequestTokenRef.current += 1;
+    explorerDirectoryStateRef.current = {};
+    setExplorerDirectoryStateByPath({});
+    setExplorerError("");
+    setExpandedFolders(new Set(nextExpandedPaths));
+
+    const rootEntries = await loadExplorerDirectory({ directoryPath: "", force: true });
+    if (!rootEntries) {
       return;
     }
-    setExpandedFolders(new Set(explorerIndex.topFolders));
-    setDidInitExpandedFolders(true);
-  }, [didInitExpandedFolders, explorerIndex.topFolders]);
+
+    for (const directoryPath of nextExpandedPaths) {
+      await loadExplorerDirectory({ directoryPath, force: true });
+    }
+  }
 
   useEffect(() => {
+    explorerRequestTokenRef.current += 1;
+    explorerDirectoryStateRef.current = {};
+    setExplorerDirectoryStateByPath({});
     setExpandedFolders(new Set());
-    setDidInitExpandedFolders(false);
     setExplorerError("");
-  }, [activeWorkspaceId]);
+  }, [activeWorkspaceId, workspaceCwd]);
 
   useEffect(() => {
-    const onSetTab = (event: Event) => {
-      const custom = event as CustomEvent<"explorer" | "changes">;
-      if (!custom.detail) {
-        return;
-      }
-      setRightTab(custom.detail);
-      setLayout({ patch: { sidebarOverlayVisible: true } });
-    };
-    window.addEventListener("stave:right-panel-tab", onSetTab as EventListener);
-    return () => window.removeEventListener("stave:right-panel-tab", onSetTab as EventListener);
-  }, [setLayout]);
+    if (!workspaceCwd || !sidebarOverlayVisible || rightTab !== "explorer") {
+      return;
+    }
+    if (explorerDirectoryStateRef.current[""]) {
+      return;
+    }
+    void loadExplorerDirectory({ directoryPath: "" });
+  }, [activeWorkspaceId, rightTab, sidebarOverlayVisible, workspaceCwd]);
 
   async function loadScmStatus() {
     const getStatus = window.api?.sourceControl?.getStatus;
@@ -286,6 +396,54 @@ export function EditorPanel() {
     return true;
   }
 
+  function handleOpenExplorerFile(filePath: string) {
+    void openFileFromTree({ filePath });
+    setLayout({ patch: { editorVisible: true } });
+  }
+
+  function handleToggleExplorerFolder(path: string) {
+    const isOpen = expandedFolders.has(path);
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+    if (!isOpen) {
+      void loadExplorerDirectory({ directoryPath: path });
+    }
+  }
+
+  async function handleExpandAllFolders() {
+    if (!workspaceCwd) {
+      setExplorerError("Workspace path unavailable.");
+      return;
+    }
+
+    const nextExpandedFolders = new Set<string>();
+
+    async function walk(directoryPath: string) {
+      const entries = await loadExplorerDirectory({ directoryPath });
+      if (!entries) {
+        return;
+      }
+
+      for (const entry of entries) {
+        if (entry.type !== "folder") {
+          continue;
+        }
+        nextExpandedFolders.add(entry.path);
+        await walk(entry.path);
+      }
+    }
+
+    await walk("");
+    setExpandedFolders(nextExpandedFolders);
+  }
+
   async function handleAddFolder() {
     const nextPath = window.prompt("New folder path (relative to project root)");
     if (nextPath === null) {
@@ -303,14 +461,16 @@ export function EditorPanel() {
     if (!ok) {
       return;
     }
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      for (const folder of collectAncestorFolders({ path: folderPath })) {
-        next.add(folder);
-      }
-      return next;
-    });
-    await refreshProjectFiles();
+
+    const nextExpandedFolders = new Set(expandedFolders);
+    for (const folder of collectAncestorFolders({ path: folderPath })) {
+      nextExpandedFolders.add(folder);
+    }
+
+    await Promise.all([
+      refreshProjectFiles(),
+      reloadExplorer({ expandedPaths: nextExpandedFolders }),
+    ]);
   }
 
   async function handleAddFile() {
@@ -335,16 +495,17 @@ export function EditorPanel() {
     if (!ok) {
       return;
     }
-    setExpandedFolders((prev) => {
-      const next = new Set(prev);
-      for (const folder of collectAncestorFolders({ path: parentPath })) {
-        next.add(folder);
-      }
-      return next;
-    });
-    await refreshProjectFiles();
-    await openFileFromTree({ filePath });
-    setLayout({ patch: { editorVisible: true } });
+
+    const nextExpandedFolders = new Set(expandedFolders);
+    for (const folder of collectAncestorFolders({ path: parentPath })) {
+      nextExpandedFolders.add(folder);
+    }
+
+    await Promise.all([
+      refreshProjectFiles(),
+      reloadExplorer({ expandedPaths: nextExpandedFolders }),
+    ]);
+    handleOpenExplorerFile(filePath);
   }
 
   return (
@@ -362,7 +523,7 @@ export function EditorPanel() {
                     variant="ghost"
                     size="sm"
                     className={cn("h-7 w-7 rounded-sm p-0 text-muted-foreground", rightTab === "explorer" && "bg-secondary/80 text-foreground")}
-                    onClick={() => setRightTab("explorer")}
+                    onClick={() => setLayout({ patch: { sidebarOverlayVisible: true, sidebarOverlayTab: "explorer" } })}
                   >
                     <FolderTree className="size-4" />
                   </Button>
@@ -375,7 +536,7 @@ export function EditorPanel() {
                     variant="ghost"
                     size="sm"
                     className={cn("h-7 w-7 rounded-sm p-0 text-muted-foreground", rightTab === "changes" && "bg-secondary/80 text-foreground")}
-                    onClick={() => setRightTab("changes")}
+                    onClick={() => setLayout({ patch: { sidebarOverlayVisible: true, sidebarOverlayTab: "changes" } })}
                   >
                     <GitBranch className="size-4" />
                   </Button>
@@ -402,7 +563,10 @@ export function EditorPanel() {
                       if (rightTab === "changes") {
                         void loadScmStatus();
                       } else {
-                        void refreshProjectFiles();
+                        void Promise.all([
+                          refreshProjectFiles(),
+                          reloadExplorer({ expandedPaths: expandedFolders }),
+                        ]);
                       }
                     }}
                   >
@@ -498,7 +662,7 @@ export function EditorPanel() {
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 rounded-sm p-0 text-muted-foreground"
-                          onClick={() => setExpandedFolders(new Set(explorerIndex.folderPaths))}
+                          onClick={() => void handleExpandAllFolders()}
                         >
                           <ChevronsDown className="size-4" />
                         </Button>
@@ -510,28 +674,22 @@ export function EditorPanel() {
               </div>
               {explorerError ? <p className="mb-1 text-sm text-destructive">{explorerError}</p> : null}
               <div className="space-y-1">
-                {explorerTree.length === 0 ? <p className="text-sm text-muted-foreground">No files found.</p> : null}
-                {explorerTree.map((node) => (
+                {isExplorerLoading && explorerTree.length === 0 ? (
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <LoaderCircle className="size-4 animate-spin" />
+                    Loading files...
+                  </p>
+                ) : null}
+                {!explorerError && !isExplorerLoading && explorerTree.length === 0 ? <p className="text-sm text-muted-foreground">No files found.</p> : null}
+                {explorerTree.map((entry) => (
                   <ExplorerTreeRow
-                    key={node.path}
-                    node={node}
+                    key={entry.path}
+                    entry={entry}
                     depth={0}
                     expanded={expandedFolders}
-                    onToggle={(path) => {
-                      setExpandedFolders((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(path)) {
-                          next.delete(path);
-                        } else {
-                          next.add(path);
-                        }
-                        return next;
-                      });
-                    }}
-                    onOpenFile={(filePath) => {
-                      void openFileFromTree({ filePath });
-                      setLayout({ patch: { editorVisible: true } });
-                    }}
+                    directoryStateByPath={explorerDirectoryStateByPath}
+                    onToggle={handleToggleExplorerFolder}
+                    onOpenFile={handleOpenExplorerFile}
                   />
                 ))}
               </div>

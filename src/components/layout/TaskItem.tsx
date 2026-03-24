@@ -1,5 +1,5 @@
 import { Archive, Download, Ellipsis, Hash, LoaderCircle, Pencil } from "lucide-react";
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import { ModelIcon } from "@/components/ai-elements";
 import { Badge, Button, DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger, Kbd, WaveIndicator } from "@/components/ui";
 import { getProviderLabel } from "@/lib/providers/model-catalog";
@@ -22,6 +22,7 @@ export interface TaskItemProps extends BaseTaskItemProps {
   onArchive: () => void;
   onExport: () => void;
   onViewSession: () => void;
+  dragHandle?: ReactNode;
 }
 
 export const CompactTaskItem = memo(function CompactTaskItem({
@@ -71,6 +72,7 @@ export const TaskItem = memo(function TaskItem({
   onArchive,
   onExport,
   onViewSession,
+  dragHandle,
 }: TaskItemProps) {
   const isTurnActive = useAppStore((state) => Boolean(state.activeTurnIdsByTask[task.id]));
 
@@ -84,6 +86,7 @@ export const TaskItem = memo(function TaskItem({
       )}
     >
       <div className="flex items-start gap-2 px-3 py-2">
+        {dragHandle ? <div className="shrink-0 pt-0.5">{dragHandle}</div> : null}
         <button onClick={onSelect} className="min-w-0 flex-1 text-left">
           <div className="flex items-start justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5">

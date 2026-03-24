@@ -1,4 +1,4 @@
-import type { WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
+import type { WorkspaceDirectoryEntry, WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
 
 export class UnavailableFsAdapter implements WorkspaceFsAdapter {
   isAvailable() {
@@ -11,6 +11,10 @@ export class UnavailableFsAdapter implements WorkspaceFsAdapter {
 
   async listFiles(): Promise<string[]> {
     return [];
+  }
+
+  async listDirectory(_args: { directoryPath?: string }): Promise<WorkspaceDirectoryEntry[] | null> {
+    return null;
   }
 
   async readFile(_args: { filePath: string }): Promise<WorkspaceFileData | null> {

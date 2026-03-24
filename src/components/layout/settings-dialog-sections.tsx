@@ -1,7 +1,7 @@
 import { memo, useEffect, useState, type ComponentPropsWithoutRef } from "react";
 import { Bot, Code2, Cog, Globe, KeyRound, Monitor, Moon, Palette, ScrollText, SearchCheck, Shield, Sun, TerminalSquare, TriangleAlert, Wrench } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import { Button, Card, Input, Textarea } from "@/components/ui";
+import { Badge, Button, Card, Input, Textarea } from "@/components/ui";
 import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -719,10 +719,32 @@ function SubagentsSection() {
 }
 
 function SkillsSection() {
-  const [skillsEnabled, skillsAutoSuggest] = useAppStore(
-    useShallow((state) => [state.settings.skillsEnabled, state.settings.skillsAutoSuggest] as const),
+  const [skillsEnabled, skillsAutoSuggest, skillCatalog, activeWorkspaceId, projectPath, workspacePathById] = useAppStore(
+    useShallow((state) => [
+      state.settings.skillsEnabled,
+      state.settings.skillsAutoSuggest,
+      state.skillCatalog,
+      state.activeWorkspaceId,
+      state.projectPath,
+      state.workspacePathById,
+    ] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
+  const refreshSkillCatalog = useAppStore((state) => state.refreshSkillCatalog);
+  const workspacePath = workspacePathById[activeWorkspaceId] ?? projectPath ?? null;
+
+  useEffect(() => {
+    if (!skillsEnabled) {
+      return;
+    }
+    if (skillCatalog.status === "loading" && skillCatalog.workspacePath === workspacePath) {
+      return;
+    }
+    if (skillCatalog.status === "ready" && skillCatalog.workspacePath === workspacePath) {
+      return;
+    }
+    void refreshSkillCatalog({ workspacePath });
+  }, [refreshSkillCatalog, skillCatalog.status, skillCatalog.workspacePath, skillsEnabled, workspacePath]);
 
   return (
     <>
@@ -749,6 +771,77 @@ function SkillsSection() {
               ]}
             />
           </LabeledField>
+        </SettingsCard>
+        <SettingsCard
+          title="Detected Skills"
+          description="Stave scans global, user, and workspace-local skill roots. User roots follow the active Claude/Codex home resolution instead of hardcoded directories."
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">
+                {skillCatalog.status === "loading"
+                  ? "Refreshing catalog..."
+                  : skillCatalog.status === "error"
+                  ? "Skill discovery failed"
+                  : `${skillCatalog.skills.length} skills across ${skillCatalog.roots.length} roots`}
+              </p>
+              <p className="text-sm text-muted-foreground">{skillCatalog.detail}</p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void refreshSkillCatalog({ workspacePath })}
+            >
+              Refresh
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Roots</p>
+            {skillCatalog.roots.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No skill roots were discovered for the current workspace.</p>
+            ) : (
+              skillCatalog.roots.map((root) => (
+                <div key={root.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{root.path}</span>
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                      {root.scope}
+                    </Badge>
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                      {root.provider}
+                    </Badge>
+                  </div>
+                  {root.detail ? <p className="mt-1 text-xs text-muted-foreground">{root.detail}</p> : null}
+                </div>
+              ))
+            )}
+          </div>
+          <div className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Catalog</p>
+            {skillCatalog.skills.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No `SKILL.md` entries were found.</p>
+            ) : (
+              skillCatalog.skills.slice(0, 18).map((skill) => (
+                <div key={skill.id} className="rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium">{skill.invocationToken}</span>
+                    <Badge variant="secondary" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                      {skill.scope}
+                    </Badge>
+                    <Badge variant="outline" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                      {skill.provider}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">{skill.description}</p>
+                </div>
+              ))
+            )}
+            {skillCatalog.skills.length > 18 ? (
+              <p className="text-xs text-muted-foreground">
+                Showing the first 18 skills. Use the `$` selector in the composer to search the full catalog.
+              </p>
+            ) : null}
+          </div>
         </SettingsCard>
       </SectionStack>
     </>

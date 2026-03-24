@@ -7,6 +7,7 @@ import type {
   ToolUsePart,
   UserInputQuestion,
 } from "@/types/chat";
+import type { SkillPromptContext } from "@/lib/skills/types";
 
 export type ProviderId = "claude-code" | "codex";
 
@@ -21,6 +22,11 @@ export interface CanonicalRetrievedContextPart {
   sourceId: string;
   title?: string;
   content: string;
+}
+
+export interface CanonicalSkillContextPart {
+  type: "skill_context";
+  skills: SkillPromptContext[];
 }
 
 export interface CanonicalConversationMessage {
@@ -45,7 +51,7 @@ export interface CanonicalConversationRequest {
   mode: "chat" | "review";
   history: CanonicalConversationMessage[];
   input: CanonicalConversationMessage & { role: "user" };
-  contextParts: Array<FileContextPart | CanonicalRetrievedContextPart | ImageContextPart>;
+  contextParts: Array<FileContextPart | CanonicalRetrievedContextPart | ImageContextPart | CanonicalSkillContextPart>;
   resume?: {
     nativeConversationId?: string;
   };

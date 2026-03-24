@@ -46,6 +46,11 @@ class DynamicWorkspaceFsAdapter implements WorkspaceFsAdapter {
     return files;
   }
 
+  async listDirectory(args: Parameters<WorkspaceFsAdapter["listDirectory"]>[0]) {
+    const delegate = await this.prepareDelegate();
+    return delegate.listDirectory(args);
+  }
+
   async readFile(args: Parameters<WorkspaceFsAdapter["readFile"]>[0]) {
     const delegate = await this.prepareDelegate();
     return delegate.readFile(args);

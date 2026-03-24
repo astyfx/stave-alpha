@@ -1,11 +1,13 @@
-import { Camera, Check, FilePlus2, LoaderCircle, OctagonX, Send, SlidersHorizontal, X } from "lucide-react";
+import { Camera, Check, FilePlus2, FolderOpen, Globe2, LoaderCircle, OctagonX, Send, SlidersHorizontal, Sparkles, UserRound, X } from "lucide-react";
 import type { Attachment } from "@/types/chat";
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Command, CommandEmpty, CommandGroup, CommandItem, CommandList, Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger, Input, Popover, PopoverAnchor, PopoverContent, Textarea } from "@/components/ui";
 import type { CommandPaletteItem, CommandPaletteProviderNote } from "@/lib/commands";
 import { filterCommandPaletteItems, getSlashCommandSearchQuery } from "@/lib/commands";
+import { getActiveSkillTokenMatch, replaceSkillToken } from "@/lib/skills/catalog";
+import type { SkillCatalogEntry } from "@/lib/skills/types";
 import { cn } from "@/lib/utils";
-import { getAcceptedCommandPaletteItem, getNextCommandSelectionIndex, NO_COMMAND_SELECTION } from "./prompt-input.utils";
+import { getAcceptedCommandPaletteItem, getAcceptedPaletteItem, getNextCommandSelectionIndex, NO_COMMAND_SELECTION } from "./prompt-input.utils";
 import { ModelSelector, type ModelSelectorOption } from "./model-selector";
 import { PromptInputRuntimeBar, type PromptInputRuntimeControl, type PromptInputRuntimeStatusItem } from "./prompt-input-runtime-bar";
 import { PermissionModeSelector, cyclePermissionMode, type PermissionModeValue } from "./permission-mode-selector";
@@ -25,6 +27,9 @@ interface PromptInputProps {
   runtimeStatusItems?: readonly PromptInputRuntimeStatusItem[];
   commandPaletteItems?: CommandPaletteItem[];
   commandPaletteProviderNote?: CommandPaletteProviderNote;
+  skillsEnabled?: boolean;
+  skillsAutoSuggest?: boolean;
+  skillPaletteItems?: readonly SkillCatalogEntry[];
   onValueChange: (value: string) => void;
   onModelSelect: (args: { selection: ModelSelectorOption }) => void;
   onAttachFilesChange: (args: { filePaths: string[] }) => void;
@@ -51,6 +56,9 @@ export function PromptInput(args: PromptInputProps) {
     runtimeStatusItems,
     commandPaletteItems,
     commandPaletteProviderNote,
+    skillsEnabled,
+    skillsAutoSuggest,
+    skillPaletteItems,
     onValueChange,
     onModelSelect,
     onAttachFilesChange,
@@ -70,18 +78,50 @@ export function PromptInput(args: PromptInputProps) {
   const [fileFilter, setFileFilter] = useState("");
   const [dismissedCommandQuery, setDismissedCommandQuery] = useState<string | null>(null);
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(NO_COMMAND_SELECTION);
+  const [dismissedSkillToken, setDismissedSkillToken] = useState<string | null>(null);
+  const [selectedSkillIndex, setSelectedSkillIndex] = useState(NO_COMMAND_SELECTION);
+  const [caretIndex, setCaretIndex] = useState(value.length);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const wasTurnActiveRef = useRef(Boolean(isTurnActive));
   const interactionsDisabled = Boolean(disabled || isTurnActive);
   const maxTextareaHeight = 240;
   const commandQuery = useMemo(() => getSlashCommandSearchQuery(value), [value]);
+  const activeSkillToken = useMemo(() => (
+    skillsEnabled
+      ? getActiveSkillTokenMatch({
+          value,
+          caretIndex,
+        })
+      : null
+  ), [caretIndex, skillsEnabled, value]);
   const filteredCommandItems = useMemo(() => filterCommandPaletteItems({
     items: commandPaletteItems ?? [],
     query: commandQuery,
   }), [commandPaletteItems, commandQuery]);
+  const filteredSkillItems = useMemo(() => {
+    const query = activeSkillToken?.query.trim().toLowerCase() ?? "";
+    const items = skillPaletteItems ?? [];
+    if (!query) {
+      return items;
+    }
+    return items.filter((skill) => {
+      const haystacks = [
+        skill.slug,
+        skill.name,
+        skill.description,
+        skill.scope,
+        skill.provider,
+      ];
+      return haystacks.some((entry) => entry.toLowerCase().includes(query));
+    });
+  }, [activeSkillToken?.query, skillPaletteItems]);
   const indexedCommandItems = useMemo(
     () => filteredCommandItems.map((item, index) => ({ item, index })),
     [filteredCommandItems]
+  );
+  const indexedSkillItems = useMemo(
+    () => filteredSkillItems.map((item, index) => ({ item, index })),
+    [filteredSkillItems]
   );
   const staveCommandItems = useMemo(
     () => indexedCommandItems.filter(({ item }) => item.source !== "provider_native"),
@@ -91,11 +131,30 @@ export function PromptInput(args: PromptInputProps) {
     () => indexedCommandItems.filter(({ item }) => item.source === "provider_native"),
     [indexedCommandItems]
   );
+  const localSkillItems = useMemo(
+    () => indexedSkillItems.filter(({ item }) => item.scope === "local"),
+    [indexedSkillItems]
+  );
+  const userSkillItems = useMemo(
+    () => indexedSkillItems.filter(({ item }) => item.scope === "user"),
+    [indexedSkillItems]
+  );
+  const globalSkillItems = useMemo(
+    () => indexedSkillItems.filter(({ item }) => item.scope === "global"),
+    [indexedSkillItems]
+  );
   const commandPaletteOpen = Boolean(
     commandQuery
     && dismissedCommandQuery !== commandQuery
     && (filteredCommandItems.length > 0 || commandPaletteProviderNote)
   );
+  const skillPaletteOpen = Boolean(
+    skillsEnabled
+    && skillsAutoSuggest
+    && activeSkillToken
+    && dismissedSkillToken !== activeSkillToken.token
+  );
+  const activePalette = skillPaletteOpen ? "skill" : commandPaletteOpen ? "command" : null;
   const hasRuntimePermissionControl = Boolean(runtimeQuickControls?.some((control) => control.id === "permission-mode"));
   const showStandalonePermissionSelector = Boolean(
     permissionMode !== undefined && onPermissionModeChange && !hasRuntimePermissionControl
@@ -143,8 +202,18 @@ export function PromptInput(args: PromptInputProps) {
   }, [commandQuery, dismissedCommandQuery]);
 
   useEffect(() => {
+    if (dismissedSkillToken && activeSkillToken?.token !== dismissedSkillToken) {
+      setDismissedSkillToken(null);
+    }
+  }, [activeSkillToken?.token, dismissedSkillToken]);
+
+  useEffect(() => {
     setSelectedCommandIndex(NO_COMMAND_SELECTION);
   }, [commandQuery]);
+
+  useEffect(() => {
+    setSelectedSkillIndex(NO_COMMAND_SELECTION);
+  }, [activeSkillToken?.token]);
 
   useEffect(() => {
     if (!commandPaletteOpen) {
@@ -158,6 +227,19 @@ export function PromptInput(args: PromptInputProps) {
       return Math.min(current, Math.max(filteredCommandItems.length - 1, 0));
     });
   }, [commandPaletteOpen, filteredCommandItems.length]);
+
+  useEffect(() => {
+    if (!skillPaletteOpen) {
+      setSelectedSkillIndex(NO_COMMAND_SELECTION);
+      return;
+    }
+    setSelectedSkillIndex((current) => {
+      if (current === NO_COMMAND_SELECTION) {
+        return NO_COMMAND_SELECTION;
+      }
+      return Math.min(current, Math.max(filteredSkillItems.length - 1, 0));
+    });
+  }, [filteredSkillItems.length, skillPaletteOpen]);
 
   const filteredFiles = useMemo(() => {
     const normalized = fileFilter.trim().toLowerCase();
@@ -180,6 +262,10 @@ export function PromptInput(args: PromptInputProps) {
     await submitCurrentMessage();
   }
 
+  function syncCaretPosition(nextTarget: HTMLTextAreaElement | null) {
+    setCaretIndex(nextTarget?.selectionStart ?? 0);
+  }
+
   function applyCommandSelection(item: CommandPaletteItem) {
     const leadingWhitespace = value.match(/^\s*/)?.[0] ?? "";
     onValueChange(`${leadingWhitespace}${item.insertText}`);
@@ -189,10 +275,43 @@ export function PromptInput(args: PromptInputProps) {
     });
   }
 
+  function applySkillSelection(item: SkillCatalogEntry) {
+    if (!activeSkillToken) {
+      return;
+    }
+    const nextValue = replaceSkillToken({
+      value,
+      match: activeSkillToken,
+      skill: item,
+    });
+    const nextCaretIndex = activeSkillToken.start + item.slug.length + 2;
+    onValueChange(nextValue);
+    setDismissedSkillToken(null);
+    setCaretIndex(nextCaretIndex);
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(nextCaretIndex, nextCaretIndex);
+    });
+  }
+
+  function renderSkillScopeIcon(scope: SkillCatalogEntry["scope"]) {
+    if (scope === "local") {
+      return <FolderOpen className="size-3.5 text-foreground/80" />;
+    }
+    if (scope === "user") {
+      return <UserRound className="size-3.5 text-foreground/80" />;
+    }
+    return <Globe2 className="size-3.5 text-foreground/80" />;
+  }
+
   return (
     <>
     <form data-prompt-input-root onSubmit={handleSubmit} className="space-y-3 rounded-xl border border-border/80 bg-card p-4">
-      <Popover open={commandPaletteOpen} modal={false}>
+      <Popover open={activePalette !== null} modal={false}>
         <PopoverAnchor asChild>
           <div>
             <Textarea
@@ -200,10 +319,49 @@ export function PromptInput(args: PromptInputProps) {
               value={value}
               disabled={interactionsDisabled}
               onChange={(event) => {
+                syncCaretPosition(event.target);
                 onValueChange(event.target.value);
               }}
+              onClick={(event) => syncCaretPosition(event.currentTarget)}
+              onKeyUp={(event) => syncCaretPosition(event.currentTarget)}
+              onSelect={(event) => syncCaretPosition(event.currentTarget)}
               onKeyDown={(event) => {
-                if (commandPaletteOpen && filteredCommandItems.length > 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                if (activePalette === "skill" && filteredSkillItems.length > 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setSelectedSkillIndex((current) => getNextCommandSelectionIndex({
+                      currentIndex: current,
+                      itemCount: filteredSkillItems.length,
+                      direction: "next",
+                    }));
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setSelectedSkillIndex((current) => getNextCommandSelectionIndex({
+                      currentIndex: current,
+                      itemCount: filteredSkillItems.length,
+                      direction: "previous",
+                    }));
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === "Tab") {
+                    if (event.nativeEvent.isComposing) {
+                      return;
+                    }
+                    const selectedItem = getAcceptedPaletteItem({
+                      items: filteredSkillItems,
+                      selectedIndex: selectedSkillIndex,
+                      triggerKey: event.key,
+                    });
+                    if (selectedItem) {
+                      event.preventDefault();
+                      applySkillSelection(selectedItem);
+                      return;
+                    }
+                  }
+                }
+                if (activePalette === "command" && filteredCommandItems.length > 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
                   if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setSelectedCommandIndex((current) => getNextCommandSelectionIndex({
@@ -238,7 +396,12 @@ export function PromptInput(args: PromptInputProps) {
                     }
                   }
                 }
-                if (commandPaletteOpen && event.key === "Escape") {
+                if (activePalette === "skill" && event.key === "Escape") {
+                  event.preventDefault();
+                  setDismissedSkillToken(activeSkillToken?.token ?? null);
+                  return;
+                }
+                if (activePalette === "command" && event.key === "Escape") {
                   event.preventDefault();
                   setDismissedCommandQuery(commandQuery);
                   return;
@@ -260,7 +423,7 @@ export function PromptInput(args: PromptInputProps) {
                 event.preventDefault();
                 void submitCurrentMessage();
               }}
-              placeholder="Use / for provider commands, /stave: for local commands, @ to search files (Enter to send)"
+              placeholder="Use / for commands, $ for skills, @ to search files (Enter to send)"
               className="min-h-[104px] max-h-[240px] resize-none overflow-y-auto rounded-lg border-border/70 bg-background text-lg leading-8 md:text-lg"
             />
           </div>
@@ -270,16 +433,123 @@ export function PromptInput(args: PromptInputProps) {
           side="top"
           sideOffset={8}
           onOpenAutoFocus={(event) => event.preventDefault()}
-          onInteractOutside={() => setDismissedCommandQuery(commandQuery)}
+          onInteractOutside={() => {
+            if (activePalette === "skill") {
+              setDismissedSkillToken(activeSkillToken?.token ?? null);
+              return;
+            }
+            setDismissedCommandQuery(commandQuery);
+          }}
           className="w-[min(34rem,calc(100vw-2rem))] gap-0 rounded-xl border border-border/80 bg-popover p-1 shadow-lg"
         >
           <Command shouldFilter={false} className="rounded-lg border border-border/60 bg-background/70 p-0">
             <CommandList className="max-h-72">
-              {filteredCommandItems.length === 0 ? (
+              {activePalette === "skill" && filteredSkillItems.length === 0 ? (
+                <CommandEmpty>No matching skill.</CommandEmpty>
+              ) : activePalette === "command" && filteredCommandItems.length === 0 ? (
                 <CommandEmpty>No matching slash command.</CommandEmpty>
               ) : (
                 <>
-                  {staveCommandItems.length > 0 ? (
+                  {activePalette === "skill" && localSkillItems.length > 0 ? (
+                    <CommandGroup heading="Workspace skills">
+                      {localSkillItems.map(({ item, index }) => (
+                        <CommandItem
+                          key={item.id}
+                          value={item.slug}
+                          data-selected={index === selectedSkillIndex ? "" : undefined}
+                          className={cn(
+                            "items-start gap-3 rounded-md px-3 py-2",
+                            index === selectedSkillIndex && "bg-muted text-foreground"
+                          )}
+                          onMouseEnter={() => setSelectedSkillIndex(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applySkillSelection(item);
+                          }}
+                        >
+                          <div className="flex items-start pt-0.5">
+                            {renderSkillScopeIcon(item.scope)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{item.invocationToken}</span>
+                              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                                {item.provider === "shared" ? "Shared" : item.provider === "claude-code" ? "Claude" : "Codex"}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ) : null}
+                  {activePalette === "skill" && userSkillItems.length > 0 ? (
+                    <CommandGroup heading="User skills">
+                      {userSkillItems.map(({ item, index }) => (
+                        <CommandItem
+                          key={item.id}
+                          value={item.slug}
+                          data-selected={index === selectedSkillIndex ? "" : undefined}
+                          className={cn(
+                            "items-start gap-3 rounded-md px-3 py-2",
+                            index === selectedSkillIndex && "bg-muted text-foreground"
+                          )}
+                          onMouseEnter={() => setSelectedSkillIndex(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applySkillSelection(item);
+                          }}
+                        >
+                          <div className="flex items-start pt-0.5">
+                            {renderSkillScopeIcon(item.scope)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{item.invocationToken}</span>
+                              <Badge variant="outline" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                                {item.provider === "shared" ? "Shared" : item.provider === "claude-code" ? "Claude" : "Codex"}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ) : null}
+                  {activePalette === "skill" && globalSkillItems.length > 0 ? (
+                    <CommandGroup heading="Global skills">
+                      {globalSkillItems.map(({ item, index }) => (
+                        <CommandItem
+                          key={item.id}
+                          value={item.slug}
+                          data-selected={index === selectedSkillIndex ? "" : undefined}
+                          className={cn(
+                            "items-start gap-3 rounded-md px-3 py-2",
+                            index === selectedSkillIndex && "bg-muted text-foreground"
+                          )}
+                          onMouseEnter={() => setSelectedSkillIndex(index)}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            applySkillSelection(item);
+                          }}
+                        >
+                          <div className="flex items-start pt-0.5">
+                            {renderSkillScopeIcon(item.scope)}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{item.invocationToken}</span>
+                              <Badge variant="outline" className="h-5 px-1.5 text-[10px] uppercase tracking-wide">
+                                {item.provider === "shared" ? "Shared" : item.provider === "claude-code" ? "Claude" : "Codex"}
+                              </Badge>
+                            </div>
+                            <p className="mt-0.5 text-xs text-muted-foreground">{item.description}</p>
+                          </div>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  ) : null}
+                  {activePalette === "command" && staveCommandItems.length > 0 ? (
                     <CommandGroup heading="Stave commands">
                       {staveCommandItems.map(({ item, index }) => (
                         <CommandItem
@@ -309,7 +579,7 @@ export function PromptInput(args: PromptInputProps) {
                       ))}
                     </CommandGroup>
                   ) : null}
-                  {providerCommandItems.length > 0 ? (
+                  {activePalette === "command" && providerCommandItems.length > 0 ? (
                     <CommandGroup heading={selectedModel.providerId === "claude-code" ? "Claude native commands" : "Provider commands"}>
                       {providerCommandItems.map(({ item, index }) => (
                         <CommandItem
@@ -342,7 +612,17 @@ export function PromptInput(args: PromptInputProps) {
                 </>
               )}
             </CommandList>
-            {commandPaletteOpen ? (
+            {activePalette === "skill" ? (
+              <div className="border-t border-border/70 px-3 py-2.5 text-xs text-muted-foreground">
+                <p className="flex items-center gap-2 font-medium text-foreground">
+                  <Sparkles className="size-3.5" />
+                  Tab inserts the highlighted skill token. Selected skills are normalized on send.
+                </p>
+                <p className="mt-2">
+                  `Claude` uses native `/skill-name` dispatch. `Codex` receives the resolved skill instructions as prompt context.
+                </p>
+              </div>
+            ) : activePalette === "command" ? (
               <div className="border-t border-border/70 px-3 py-2.5 text-xs text-muted-foreground">
                 <p className="font-medium text-foreground">Tab inserts highlighted command. Enter sends the current prompt.</p>
                 {commandPaletteProviderNote ? (

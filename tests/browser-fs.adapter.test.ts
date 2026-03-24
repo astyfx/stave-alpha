@@ -41,9 +41,11 @@ afterEach(() => {
 });
 
 describe("BrowserFsAdapter", () => {
-  test("keeps hidden files while skipping ignored directories during root discovery", async () => {
+  test("keeps hidden files and useful dot-directories while skipping ignored directories during root discovery", async () => {
     const rootHandle = createDirectory("fixture", [
       [".env", createFile(".env")],
+      [".github", createDirectory(".github", [["workflows", createDirectory("workflows", [["ci.yml", createFile("ci.yml")]])]])],
+      ["empty-folder", createDirectory("empty-folder", [])],
       ["src", createDirectory("src", [["index.ts", createFile("index.ts")]])],
       [".git", createDirectory(".git", [["config", createFile("config")]])],
       ["node_modules", createDirectory("node_modules", [["pkg.js", createFile("pkg.js")]])],
@@ -58,7 +60,18 @@ describe("BrowserFsAdapter", () => {
 
     expect(root?.files).toEqual([
       ".env",
+      ".github/workflows/ci.yml",
       "src/index.ts",
+    ]);
+
+    await expect(adapter.listDirectory({})).resolves.toEqual([
+      { name: ".github", path: ".github", type: "folder" },
+      { name: "empty-folder", path: "empty-folder", type: "folder" },
+      { name: "src", path: "src", type: "folder" },
+      { name: ".env", path: ".env", type: "file" },
+    ]);
+    await expect(adapter.listDirectory({ directoryPath: ".github" })).resolves.toEqual([
+      { name: "workflows", path: ".github/workflows", type: "folder" },
     ]);
   });
 });

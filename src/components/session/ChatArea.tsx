@@ -59,7 +59,7 @@ export function ChatArea() {
               <Layers strokeWidth={1.25} />
             </EmptyMedia>
             <EmptyTitle>Pick a Workspace</EmptyTitle>
-            <EmptyDescription>Select a workspace from the bar above to continue.</EmptyDescription>
+            <EmptyDescription>Select a workspace from the left sidebar to continue.</EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>

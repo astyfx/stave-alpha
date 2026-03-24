@@ -12,6 +12,12 @@ interface TerminalTab {
   label: string;
 }
 
+interface WorkspaceTerminalState {
+  tabs: TerminalTab[];
+  activeTabId: string | null;
+  sessionBuffers: Record<string, string>;
+}
+
 const TERMINAL_TRANSCRIPT_STORAGE_KEY = "stave:terminal-task-transcript:v1";
 const TERMINAL_POLL_INTERVAL_MS = 120;
 const TERMINAL_TRANSCRIPT_FLUSH_MS = 280;
@@ -95,6 +101,8 @@ export function TerminalDock() {
   const resizeFrameRef = useRef<number | null>(null);
   const lastResizeRef = useRef<{ cols: number; rows: number }>({ cols: 0, rows: 0 });
   const transcriptLoadedRef = useRef(false);
+  const workspaceTerminalStateRef = useRef<Record<string, WorkspaceTerminalState>>({});
+  const prevWorkspaceCwdRef = useRef<string | undefined>(undefined);
 
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -312,27 +320,53 @@ export function TerminalDock() {
     }
   }, [taskKey]);
 
-  // Reset sessions only when the workspace directory changes (not on every task switch).
+  // Persist terminal sessions across workspace switches instead of killing them.
   useEffect(() => {
     if (!terminalReady) {
       return;
     }
-    setTabs([]);
-    setActiveTabId(null);
-    sessionBufferRef.current = {};
-    xtermRef.current?.clear();
 
-    void createSessionTab();
-    return () => {
-      const closeSessionApi = window.api?.terminal?.closeSession;
-      if (!closeSessionApi) {
-        return;
+    const prevCwd = prevWorkspaceCwdRef.current;
+    prevWorkspaceCwdRef.current = workspaceCwd;
+
+    // Save previous workspace's terminal state before switching.
+    if (prevCwd && prevCwd !== workspaceCwd) {
+      workspaceTerminalStateRef.current[prevCwd] = {
+        tabs: tabs,
+        activeTabId: activeTabId,
+        sessionBuffers: { ...sessionBufferRef.current },
+      };
+    }
+
+    // Restore saved state or start fresh for the new workspace.
+    const saved = workspaceCwd ? workspaceTerminalStateRef.current[workspaceCwd] : undefined;
+    if (saved && saved.tabs.length > 0) {
+      setTabs(saved.tabs);
+      setActiveTabId(saved.activeTabId);
+      sessionBufferRef.current = saved.sessionBuffers;
+      xtermRef.current?.clear();
+      const buffer = saved.activeTabId ? saved.sessionBuffers[saved.activeTabId] ?? "" : "";
+      if (buffer.trim()) {
+        xtermRef.current?.write(buffer);
       }
-      const ids = Object.keys(sessionBufferRef.current);
-      for (const id of ids) {
-        void closeSessionApi({ sessionId: id });
-      }
+    } else {
+      setTabs([]);
+      setActiveTabId(null);
       sessionBufferRef.current = {};
+      xtermRef.current?.clear();
+      void createSessionTab();
+    }
+
+    // Only kill sessions on full unmount (component teardown), not workspace switch.
+    return () => {
+      // Save current workspace state on unmount so it's available next mount.
+      if (workspaceCwd) {
+        workspaceTerminalStateRef.current[workspaceCwd] = {
+          tabs,
+          activeTabId,
+          sessionBuffers: { ...sessionBufferRef.current },
+        };
+      }
     };
   }, [workspaceCwd, terminalReady]);
 

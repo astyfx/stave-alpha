@@ -1,15 +1,10 @@
-import { ChevronDown, Home, Keyboard, LoaderCircle, Settings } from "lucide-react";
+import { FolderTree, LoaderCircle } from "lucide-react";
 import { Suspense, lazy, useCallback, useEffect, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { Button, Card, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui";
+import { Card, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { useAppStore } from "@/store/app.store";
-import { ConfirmDialog } from "@/components/layout/ConfirmDialog";
-import { CreateWorkspaceDialog } from "@/components/layout/CreateWorkspaceDialog";
-import { ProjectMenuButton } from "@/components/layout/ProjectMenuButton";
 import { TopBarUtilityActions } from "@/components/layout/TopBarUtilityActions";
 import { TopBarWindowControls } from "@/components/layout/TopBarWindowControls";
-import { TopBarWorkspaceSwitcher } from "@/components/layout/TopBarWorkspaceSwitcher";
-import { cn } from "@/lib/utils";
 
 const loadSettingsDialog = () =>
   import("@/components/layout/SettingsDialog").then((module) => ({
@@ -24,43 +19,43 @@ const KeyboardShortcutsDrawer = lazy(() => loadKeyboardShortcutsDrawer());
 const TOP_BAR_DRAG_STYLE = { WebkitAppRegion: "drag" } as CSSProperties;
 const TOP_BAR_NO_DRAG_STYLE = { WebkitAppRegion: "no-drag" } as CSSProperties;
 
+function formatWorkspacePathLabel(args: { workspacePath?: string; projectPath?: string | null }) {
+  const workspacePath = args.workspacePath?.trim();
+  if (!workspacePath) {
+    return "";
+  }
+
+  const projectPath = args.projectPath?.trim();
+  if (projectPath && workspacePath.startsWith(`${projectPath}/`)) {
+    return workspacePath.slice(projectPath.length + 1);
+  }
+
+  return workspacePath;
+}
+
 export function TopBar() {
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [createWorkspaceOpen, setCreateWorkspaceOpen] = useState(false);
-  const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
   const [
     isDarkMode,
-    workspaceRootName,
-    projectPath,
-    recentProjects,
-    activeWorkspaceBranch,
-    activeWorkspaceCwd,
-    newWorkspaceInitCommand,
     setDarkMode,
-    createWorkspace,
-    createProject,
-    openProject,
-    clearTaskSelection,
-    deleteWorkspace,
     refreshProjectFiles,
+    activeWorkspaceId,
+    workspacePathById,
+    projectPath,
   ] = useAppStore(useShallow((state) => [
     state.isDarkMode,
-    state.workspaceRootName,
-    state.projectPath,
-    state.recentProjects,
-    state.workspaceBranchById[state.activeWorkspaceId] ?? "main",
-    state.workspacePathById[state.activeWorkspaceId] ?? state.projectPath ?? undefined,
-    state.settings.newWorkspaceInitCommand,
     state.setDarkMode,
-    state.createWorkspace,
-    state.createProject,
-    state.openProject,
-    state.clearTaskSelection,
-    state.deleteWorkspace,
     state.refreshProjectFiles,
+    state.activeWorkspaceId,
+    state.workspacePathById,
+    state.projectPath,
   ] as const));
+  const activeWorkspacePath = workspacePathById[activeWorkspaceId] ?? projectPath ?? "";
+  const workspacePathLabel = formatWorkspacePathLabel({
+    workspacePath: activeWorkspacePath,
+    projectPath,
+  });
 
   function OverlayLoadingFallback(args: { title: string }) {
     return (
@@ -74,22 +69,6 @@ export function TopBar() {
       </div>
     );
   }
-
-  const handleWorkspaceDeleteRequest = useCallback((workspaceId: string, workspaceName: string) => {
-    setWorkspaceToDelete({ id: workspaceId, name: workspaceName });
-  }, []);
-
-  const handleCreateProject = useCallback(() => {
-    void createProject({});
-  }, [createProject]);
-
-  const handleOpenProject = useCallback((nextProjectPath: string) => {
-    void openProject({ projectPath: nextProjectPath });
-  }, [openProject]);
-
-  const handleOpenCreateWorkspace = useCallback(() => {
-    setCreateWorkspaceOpen(true);
-  }, []);
 
   const handleRefreshProjectFiles = useCallback(() => {
     void refreshProjectFiles();
@@ -150,64 +129,23 @@ export function TopBar() {
         className="relative z-30 flex h-12 items-center justify-between border-b border-border/70 bg-card px-3.5"
         style={TOP_BAR_DRAG_STYLE}
       >
-        <div
-          className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
-          style={{ paddingRight: "198px" }}
-        >
-          <DropdownMenu open={appMenuOpen} onOpenChange={setAppMenuOpen}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label="Open Stave menu"
-                className={cn(
-                  "h-8 gap-1.5 rounded-md border border-border/80 bg-card px-2.5 hover:bg-secondary/70",
-                  appMenuOpen && "border-primary/70 bg-secondary/80",
-                )}
-                style={TOP_BAR_NO_DRAG_STYLE}
-              >
-                <img
-                  src={isDarkMode ? "stave-logo-light.svg" : "stave-logo-dark.svg"}
-                  alt="Stave"
-                  className="h-4 w-auto"
-                  draggable={false}
-                />
-                <ChevronDown className="size-3.5 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" sideOffset={8} className="w-52" style={TOP_BAR_NO_DRAG_STYLE}>
-              <DropdownMenuLabel>Stave</DropdownMenuLabel>
-              <DropdownMenuItem className="gap-2" onSelect={clearTaskSelection}>
-                <Home className="size-4 text-muted-foreground" />
-                Home
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="gap-2" onSelect={handleOpenShortcuts}>
-                <Keyboard className="size-4 text-muted-foreground" />
-                Keyboard shortcuts
-              </DropdownMenuItem>
-              <DropdownMenuItem className="gap-2" onSelect={handleOpenSettings}>
-                <Settings className="size-4 text-muted-foreground" />
-                Settings
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <span className="h-4 w-px bg-border/80" />
-          <ProjectMenuButton
-            projectName={workspaceRootName}
-            currentProjectPath={projectPath}
-            recentProjects={recentProjects}
-            currentBranch={activeWorkspaceBranch}
-            onCreateProject={handleCreateProject}
-            onOpenProject={handleOpenProject}
-            noDragStyle={TOP_BAR_NO_DRAG_STYLE}
-          />
-          <span className="h-4 w-px bg-border/80" />
-          <TopBarWorkspaceSwitcher
-            noDragStyle={TOP_BAR_NO_DRAG_STYLE}
-            onRequestCreateWorkspace={handleOpenCreateWorkspace}
-            onRequestDeleteWorkspace={handleWorkspaceDeleteRequest}
-          />
+        <div className="min-w-0 flex-1 pr-[18rem]">
+          {activeWorkspacePath ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className="inline-flex max-w-full items-center gap-2 rounded-md border border-border/60 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground"
+                    style={TOP_BAR_NO_DRAG_STYLE}
+                  >
+                    <FolderTree className="size-3.5 shrink-0" />
+                    <span className="truncate font-mono">{workspacePathLabel}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{activeWorkspacePath}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
         </div>
         <div
           className="absolute right-0 top-0 z-20 flex h-12 shrink-0 items-center"
@@ -240,28 +178,6 @@ export function TopBar() {
           <SettingsDialog open={settingsOpen} onOpenChange={({ open }) => setSettingsOpen(open)} />
         </Suspense>
       ) : null}
-      <ConfirmDialog
-        open={Boolean(workspaceToDelete)}
-        title="Close Workspace"
-        description={workspaceToDelete ? `Close workspace "${workspaceToDelete.name}"? The associated git worktree will be permanently removed. Any uncommitted changes will be lost.` : ""}
-        confirmLabel="Close Workspace"
-        onCancel={() => setWorkspaceToDelete(null)}
-        onConfirm={() => {
-          if (!workspaceToDelete) {
-            return;
-          }
-          void deleteWorkspace({ workspaceId: workspaceToDelete.id });
-          setWorkspaceToDelete(null);
-        }}
-      />
-      <CreateWorkspaceDialog
-        open={createWorkspaceOpen}
-        activeBranch={activeWorkspaceBranch}
-        cwd={activeWorkspaceCwd}
-        defaultInitCommand={newWorkspaceInitCommand}
-        onOpenChange={setCreateWorkspaceOpen}
-        onCreateWorkspace={createWorkspace}
-      />
     </>
   );
 }

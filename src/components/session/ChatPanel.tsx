@@ -37,7 +37,6 @@ import {
   parseSubagentToolInput,
 } from "@/components/ai-elements";
 import {
-  getLatestUserMessageId,
   getMessageBodyFallbackState,
   getMessageScrollFingerprint,
   getRenderableMessageParts,
@@ -762,10 +761,6 @@ interface MessageRowProps {
   };
 }
 
-interface TaskScrollAnchor {
-  anchorMessageId: string;
-  offset: number;
-}
 
 const MessageRow = memo(function MessageRow(args: MessageRowProps) {
   const { activeTaskId, activeTurnId, chatStreamingEnabled, isFirst, liveStreamingMessageId, message, onOpenReplay } = args;
@@ -918,24 +913,17 @@ function ChatPanelMessageList(args: {
   const messages = useAppStore((state) => state.messagesByTask[state.activeTaskId] ?? EMPTY_MESSAGES);
   const activeTurnId = useAppStore((state) => state.activeTurnIdsByTask[state.activeTaskId]);
   const chatStreamingEnabled = useAppStore((state) => state.settings.chatStreamingEnabled);
-  const scrollAnchorByTaskRef = useRef(new Map<string, TaskScrollAnchor>());
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
 
   const visibleMessages = useMemo(() => messages.filter((message) => !message.isPlanResponse), [messages]);
   const liveStreamingMessageId = activeTurnId ? visibleMessages.at(-1)?.id : undefined;
-  const latestUserMessageId = useMemo(() => getLatestUserMessageId(visibleMessages), [visibleMessages]);
+  const latestVisibleMessageId = visibleMessages.at(-1)?.id;
   const lastVisibleMessageScrollFingerprint = useMemo(
     () => getMessageScrollFingerprint(visibleMessages.at(-1)),
     [visibleMessages]
   );
   const autoScrollKey = `${visibleMessages.length}:${lastVisibleMessageScrollFingerprint}`;
-  const forceScrollKey = latestUserMessageId;
-  const messageIndexById = useMemo(
-    () => new Map(visibleMessages.map((message, index) => [message.id, index])),
-    [visibleMessages]
-  );
-  const restoreAnchor = activeTaskId ? scrollAnchorByTaskRef.current.get(activeTaskId) : undefined;
-  const restoreItemIndex = restoreAnchor ? messageIndexById.get(restoreAnchor.anchorMessageId) : undefined;
+  const forceScrollKey = latestVisibleMessageId;
 
   return (
     <ConversationContent
@@ -945,26 +933,6 @@ function ChatPanelMessageList(args: {
       scrollScopeKey={activeTaskId}
       forceScrollScopeKey={activeTaskId}
       withInnerLayout={visibleMessages.length === 0}
-      onScrollPositionChange={({ container }) => {
-        if (!activeTaskId) {
-          return;
-        }
-        const containerTop = container.getBoundingClientRect().top;
-        const nodes = Array.from(container.querySelectorAll<HTMLElement>("[data-message-id]"));
-        const anchorNode = nodes.find((node) => node.getBoundingClientRect().bottom > containerTop);
-        if (!anchorNode) {
-          return;
-        }
-        const anchorMessageId = anchorNode.dataset.messageId;
-        if (!anchorMessageId) {
-          return;
-        }
-        const offset = Math.max(0, Math.round(containerTop - anchorNode.getBoundingClientRect().top));
-        scrollAnchorByTaskRef.current.set(activeTaskId, {
-          anchorMessageId,
-          offset,
-        });
-      }}
     >
       {visibleMessages.length === 0 ? (
         <Empty>
@@ -983,9 +951,6 @@ function ChatPanelMessageList(args: {
           data={visibleMessages}
           forceScrollKey={forceScrollKey}
           forceScrollScopeKey={activeTaskId}
-          restoreItemIndex={restoreItemIndex}
-          restoreItemId={restoreAnchor?.anchorMessageId}
-          restoreItemOffset={restoreAnchor?.offset}
           itemKey={(_, message) => message.id}
           itemContent={(index, message) => (
             <MessageRow

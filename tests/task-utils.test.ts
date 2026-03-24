@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getArchiveFallbackTaskId, getTaskCounts, getVisibleTasks, isTaskArchived } from "../src/lib/tasks";
+import { getArchiveFallbackTaskId, getTaskCounts, getVisibleTasks, isTaskArchived, reorderTasksWithinFilter } from "../src/lib/tasks";
 import type { Task } from "../src/types/chat";
 
 const tasks: Task[] = [
@@ -38,6 +38,28 @@ describe("task utils", () => {
 
   test("counts task buckets", () => {
     expect(getTaskCounts({ tasks })).toEqual({ active: 2, archived: 1, all: 3 });
+  });
+
+  test("reorders only the visible tasks within the active filter", () => {
+    const reordered = reorderTasksWithinFilter({
+      tasks,
+      activeTaskId: "task-active-2",
+      overTaskId: "task-active-1",
+      filter: "active",
+    });
+
+    expect(reordered.map((task) => task.id)).toEqual(["task-active-2", "task-archived-1", "task-active-1"]);
+  });
+
+  test("reorders the full list in the all filter", () => {
+    const reordered = reorderTasksWithinFilter({
+      tasks,
+      activeTaskId: "task-active-2",
+      overTaskId: "task-active-1",
+      filter: "all",
+    });
+
+    expect(reordered.map((task) => task.id)).toEqual(["task-active-2", "task-active-1", "task-archived-1"]);
   });
 
   test("selects an unarchived fallback after archive", () => {

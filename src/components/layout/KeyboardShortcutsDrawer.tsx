@@ -61,8 +61,13 @@ export function KeyboardShortcutsDrawer({ open, onOpenChange }: KeyboardShortcut
         shortcuts: [
           {
             label: "New task",
-            description: "Start a fresh conversation.",
+            description: "Start a fresh task in the selected workspace.",
             sequences: [[modifierLabel, "N"]],
+          },
+          {
+            label: "Close task",
+            description: "Archive the currently selected task.",
+            sequences: [[modifierLabel, "W"]],
           },
           {
             label: "Next task",

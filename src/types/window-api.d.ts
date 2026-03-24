@@ -1,5 +1,6 @@
 import type { CanonicalConversationRequest, ProviderId } from "@/lib/providers/provider.types";
 import type { ProviderSlashCommand } from "@/lib/providers/provider-command-catalog";
+import type { SkillCatalogResponse } from "@/lib/skills/types";
 
 interface ProviderStreamTurnArgs {
   turnId?: string;
@@ -102,7 +103,17 @@ interface WindowProviderApi {
 
 interface WindowFsApi {
   pickRoot?: () => Promise<{ ok: boolean; rootPath?: string; rootName?: string; files: string[]; stderr?: string }>;
+  resolvePath?: (args: { inputPath: string }) => Promise<{ ok: boolean; rootPath?: string; rootName?: string; files?: string[]; stderr?: string }>;
   listFiles?: (args: { rootPath: string }) => Promise<{ ok: boolean; files: string[]; stderr?: string }>;
+  listDirectory?: (args: { rootPath: string; directoryPath?: string }) => Promise<{
+    ok: boolean;
+    entries: Array<{
+      name: string;
+      path: string;
+      type: "file" | "folder";
+    }>;
+    stderr?: string;
+  }>;
   readFile?: (args: { rootPath: string; filePath: string }) => Promise<{
     ok: boolean;
     content: string;
@@ -131,6 +142,10 @@ interface WindowFsApi {
     files: Array<{ content: string; filePath: string }>;
     stderr?: string;
   }>;
+}
+
+interface WindowSkillsApi {
+  getCatalog?: (args?: { workspacePath?: string }) => Promise<SkillCatalogResponse>;
 }
 
 type LspLanguageId = "python";
@@ -464,6 +479,7 @@ interface WindowApi {
   provider?: WindowProviderApi;
   persistence?: WindowPersistenceApi;
   fs?: WindowFsApi;
+  skills?: WindowSkillsApi;
   lsp?: WindowLspApi;
   terminal?: WindowTerminalApi;
   sourceControl?: WindowSourceControlApi;

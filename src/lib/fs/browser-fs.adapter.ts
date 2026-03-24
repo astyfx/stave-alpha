@@ -1,8 +1,18 @@
-import type { WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
+import type { WorkspaceDirectoryEntry, WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
 
 interface WindowWithPicker extends Window {
   showDirectoryPicker?: () => Promise<FileSystemDirectoryHandle>;
 }
+
+const IGNORED_BROWSER_DIRECTORY_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "out",
+  "build",
+  ".next",
+  ".nuxt",
+]);
 
 function buildRevision(args: { size: number; lastModified: number }) {
   return `browser:${args.size}:${args.lastModified}`;
@@ -20,6 +30,7 @@ function toBase64(args: { bytes: Uint8Array }) {
 
 export class BrowserFsAdapter implements WorkspaceFsAdapter {
   private rootHandle: FileSystemDirectoryHandle | null = null;
+  private directoryHandleMap = new Map<string, FileSystemDirectoryHandle>();
   private fileHandleMap = new Map<string, FileSystemFileHandle>();
 
   isAvailable() {
@@ -33,13 +44,15 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
     }
 
     this.rootHandle = await picker();
+    this.directoryHandleMap.clear();
+    this.directoryHandleMap.set("", this.rootHandle);
     this.fileHandleMap.clear();
     await this.walkDirectory({
       handle: this.rootHandle,
       prefix: "",
       depth: 0,
-      maxDepth: 8,
-      maxFiles: 500,
+      maxDepth: 32,
+      maxFiles: 25_000,
     });
 
     return {
@@ -50,6 +63,54 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
 
   async listFiles(): Promise<string[]> {
     return this.getKnownFiles();
+  }
+
+  async listDirectory(args: { directoryPath?: string }): Promise<WorkspaceDirectoryEntry[] | null> {
+    const normalizedDirectoryPath = args.directoryPath?.trim() ?? "";
+    const directoryHandle = normalizedDirectoryPath.length === 0
+      ? this.rootHandle
+      : this.directoryHandleMap.get(normalizedDirectoryPath);
+    if (!directoryHandle) {
+      return null;
+    }
+
+    const entries: WorkspaceDirectoryEntry[] = [];
+    const iterableHandle = directoryHandle as unknown as {
+      entries?: () => AsyncIterableIterator<[string, FileSystemHandle]>;
+      values?: () => AsyncIterableIterator<FileSystemHandle>;
+    };
+
+    if (iterableHandle.entries) {
+      for await (const [name, handle] of iterableHandle.entries()) {
+        if (handle.kind === "directory" && isIgnoredBrowserDirectory(name)) {
+          continue;
+        }
+        entries.push({
+          name,
+          path: normalizedDirectoryPath ? `${normalizedDirectoryPath}/${name}` : name,
+          type: handle.kind === "directory" ? "folder" : "file",
+        });
+      }
+    } else if (iterableHandle.values) {
+      for await (const handle of iterableHandle.values()) {
+        const name = handle.name;
+        if (handle.kind === "directory" && isIgnoredBrowserDirectory(name)) {
+          continue;
+        }
+        entries.push({
+          name,
+          path: normalizedDirectoryPath ? `${normalizedDirectoryPath}/${name}` : name,
+          type: handle.kind === "directory" ? "folder" : "file",
+        });
+      }
+    }
+
+    return entries.sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === "folder" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
   }
 
   async readFile(args: { filePath: string }): Promise<WorkspaceFileData | null> {
@@ -132,6 +193,7 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
         if (handle.kind === "file") {
           this.fileHandleMap.set(nextPath, handle as FileSystemFileHandle);
         } else if (!isIgnoredBrowserDirectory(name)) {
+          this.directoryHandleMap.set(nextPath, handle as FileSystemDirectoryHandle);
           await this.walkDirectory({
             handle: handle as FileSystemDirectoryHandle,
             prefix: nextPath,
@@ -154,6 +216,7 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
         if (handle.kind === "file") {
           this.fileHandleMap.set(nextPath, handle as FileSystemFileHandle);
         } else if (!isIgnoredBrowserDirectory(name)) {
+          this.directoryHandleMap.set(nextPath, handle as FileSystemDirectoryHandle);
           await this.walkDirectory({
             handle: handle as FileSystemDirectoryHandle,
             prefix: nextPath,
@@ -171,5 +234,5 @@ export class BrowserFsAdapter implements WorkspaceFsAdapter {
 }
 
 function isIgnoredBrowserDirectory(name: string) {
-  return name.startsWith(".") || name === "node_modules" || name === "dist" || name === "out";
+  return IGNORED_BROWSER_DIRECTORY_NAMES.has(name);
 }

@@ -1,0 +1,57 @@
+# Skill Selector
+
+## Goal
+
+- Discover installed skills from global, user, and workspace-local roots.
+- Let users type `$` in the prompt composer to search and insert skill tokens.
+- Resolve `$skill-name` selections into provider-appropriate dispatch at send time.
+
+## Discovery Model
+
+Stave reads three scope layers:
+
+- `global`
+  - shared agent root: `~/.agents/skills` when present
+  - provider system roots such as `<provider-home>/skills/.system`
+- `user`
+  - Claude user root: resolved from `CLAUDE_HOME` when set, otherwise the active `~/.claude` home
+  - Codex user root: resolved from `CODEX_HOME` when set, otherwise the active `~/.codex` home
+- `local`
+  - `<workspace>/skills`
+  - `<workspace>/.agents/skills`
+  - `<workspace>/.claude/skills`
+  - `<workspace>/.codex/skills`
+  - `<workspace>/.agents/claude/skills`
+  - `<workspace>/.agents/codex/skills`
+
+Important behavior:
+
+- User roots are not hardcoded beyond the provider defaults. If the provider home is redirected through env or a symlinked home, Stave resolves the real path and scans that location.
+- Duplicate `SKILL.md` files are deduped by resolved real path.
+- Effective lookup precedence is `local > user > global`, with provider-specific skills preferred over shared skills at the same scope.
+
+## Composer UX
+
+- Typing `$` opens the skill palette in `PromptInput`.
+- The visible draft stays inline as `$skill-name`.
+- `Tab` inserts the highlighted skill token.
+- `Enter` still sends unless the user explicitly highlighted a skill entry.
+- The Settings dialog shows the detected roots and a sampled catalog for the current workspace.
+
+## Send Path
+
+On send, Stave resolves compatible skills for the active provider and strips recognized `$skill-name` tokens from the provider-facing prompt.
+
+- Claude
+  - selected skills are serialized as native slash skill commands like `/skill-name`
+  - the fallback prompt body excludes the injected `[Selected Skills]` block
+- Codex
+  - selected skills are normalized into a `[Selected Skills]` prompt section with the resolved skill instructions
+  - this is used because the current Codex SDK transport does not expose a dedicated skill field
+
+## Verification
+
+- `tests/skill-catalog.test.ts`
+  - provider-home override discovery
+  - `$skill-name` token resolution and replacement
+  - Claude and Codex prompt serialization

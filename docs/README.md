@@ -13,9 +13,11 @@ Use `docs/` for architecture, feature behavior, runtime contracts, and user-faci
 - [AI Elements v1.9.0 upgrade plan (2026-03-16)](future/ai-elements-v1.9.0-upgrade-plan-2026-03-16.md)
 - [Shared skill management plan (2026-03-13)](future/shared-skill-management-plan-2026-03-13.md)
 - [Session Replay](features/session-replay.md)
+- [Skill selector](features/skill-selector.md)
 - [Language intelligence](features/language-intelligence.md)
 - [Developer diagnostics](developer/diagnostics.md)
 - [shadcn preset](ui/shadcn-preset.md)
+- [Project / workspace / task shell redesign](ui/project-workspace-task-shell.md)
 
 ## Conventions
 

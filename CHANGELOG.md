@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.14](https://github.com/astyfx/stave/compare/v0.0.13...v0.0.14) (2026-03-24)
+
+### Features
+
+* auto-import existing git worktrees ([64c9760](https://github.com/astyfx/stave/commit/64c9760bc3933a16a640b45fce645efdb99438ac))
+
+### Bug Fixes
+
+* hide macos native window buttons ([2ed7b84](https://github.com/astyfx/stave/commit/2ed7b846192a0ca3490b972bcabab9f8ac139e99))
+* run packaged desktop build on macos ([0422e21](https://github.com/astyfx/stave/commit/0422e21d2d80d831e33b2be37238aa0e04934803))
+
+### Highlights
+
+- redesigned the main shell around a collapsible project-and-workspace sidebar, per-workspace task tabs, and a right-side activity rail with stable manual ordering controls
+- kept inactive workspace sessions alive while switching context by caching workspace runtime state and replaying provider events back into the owning workspace instead of interrupting live turns
+- added `$skill-name` discovery and insertion in the composer, plus provider-aware skill dispatch that resolves installed Claude and Codex skills from global, user, and workspace roots
+- taught the explorer and workspace open flows to resolve arbitrary folder paths, lazy-load directory entries, keep empty folders visible, and reuse cached directory listings until refresh
+- refreshed release-facing docs for the new shell and skill selector, and upgraded the renderer toolchain around Vite 8, `@vitejs/plugin-react` 6, and the new drag-and-drop sidebar dependencies
+
 ## [0.0.13](https://github.com/astyfx/stave/compare/v0.0.12...v0.0.13) (2026-03-20)
 
 ### Highlights

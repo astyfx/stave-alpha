@@ -10,26 +10,62 @@ export function isTaskArchived(task: Pick<Task, "archivedAt">) {
   return Boolean(task.archivedAt);
 }
 
+function matchesTaskFilter(args: { task: Pick<Task, "archivedAt">; filter: TaskFilter }) {
+  if (args.filter === "all") {
+    return true;
+  }
+  return args.filter === "archived" ? isTaskArchived(args.task) : !isTaskArchived(args.task);
+}
+
 export function getVisibleTasks(args: { tasks: Task[]; filter: TaskFilter }) {
-  const filteredTasks = args.filter === "all"
-    ? args.tasks
-    : args.tasks.filter((task) =>
-      args.filter === "archived" ? isTaskArchived(task) : !isTaskArchived(task)
-    );
+  return args.tasks.filter((task) => matchesTaskFilter({ task, filter: args.filter }));
+}
 
-  return [...filteredTasks].sort((left, right) => {
-    const leftTime = Date.parse(left.updatedAt);
-    const rightTime = Date.parse(right.updatedAt);
+function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
+  if (fromIndex === toIndex) {
+    return items;
+  }
 
-    if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
-      return left.updatedAt.localeCompare(right.updatedAt)
-        || left.title.localeCompare(right.title)
-        || left.id.localeCompare(right.id);
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  if (typeof movedItem === "undefined") {
+    return items;
+  }
+  nextItems.splice(toIndex, 0, movedItem);
+  return nextItems;
+}
+
+export function reorderTasksWithinFilter(args: {
+  tasks: Task[];
+  activeTaskId: string;
+  overTaskId: string;
+  filter: TaskFilter;
+}) {
+  if (args.activeTaskId === args.overTaskId) {
+    return args.tasks;
+  }
+
+  const visibleTasks = getVisibleTasks({ tasks: args.tasks, filter: args.filter });
+  const fromIndex = visibleTasks.findIndex((task) => task.id === args.activeTaskId);
+  const toIndex = visibleTasks.findIndex((task) => task.id === args.overTaskId);
+  if (fromIndex < 0 || toIndex < 0) {
+    return args.tasks;
+  }
+
+  const reorderedVisibleTasks = moveArrayItem(visibleTasks, fromIndex, toIndex);
+  if (reorderedVisibleTasks === visibleTasks) {
+    return args.tasks;
+  }
+
+  let reorderedVisibleIndex = 0;
+  return args.tasks.map((task) => {
+    if (!matchesTaskFilter({ task, filter: args.filter })) {
+      return task;
     }
 
-    return leftTime - rightTime
-      || left.title.localeCompare(right.title)
-      || left.id.localeCompare(right.id);
+    const nextTask = reorderedVisibleTasks[reorderedVisibleIndex];
+    reorderedVisibleIndex += 1;
+    return nextTask ?? task;
   });
 }
 

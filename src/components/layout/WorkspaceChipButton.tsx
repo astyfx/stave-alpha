@@ -27,7 +27,7 @@ export const WorkspaceChipButton = memo(function WorkspaceChipButton({
   onSwitch,
   onDelete,
 }: WorkspaceChipButtonProps) {
-  const accentTone = getWorkspaceAccentTone({ workspaceName });
+  const accentTone = getWorkspaceAccentTone({ workspaceName, isDefault });
   const label = isDefault && workspaceName.toLowerCase() === "default workspace" ? "Default" : workspaceName;
 
   return (
@@ -58,7 +58,7 @@ export const WorkspaceChipButton = memo(function WorkspaceChipButton({
               <LoaderCircle className="size-3 animate-spin" />
             </span>
           ) : (
-            <WorkspaceIdentityMark workspaceName={workspaceName} />
+            <WorkspaceIdentityMark workspaceName={workspaceName} isDefault={isDefault} />
           )}
           <span className="max-w-24 truncate">{label}</span>
           {!isDefault && workspaceId !== "base" ? (

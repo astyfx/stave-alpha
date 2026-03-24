@@ -22,6 +22,7 @@ import {
   providerSupportsNativeCommandCatalog,
   toHumanModelName,
 } from "@/lib/providers/model-catalog";
+import { getEffectiveSkillEntries } from "@/lib/skills/catalog";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store/app.store";
 import type { Attachment, ChatMessage } from "@/types/chat";
@@ -156,6 +157,7 @@ export function ChatInput(args: ChatInputProps = {}) {
     sendUserMessage,
     openFileFromTree,
     abortTaskTurn,
+    refreshSkillCatalog,
   ] = useAppStore(useShallow((state) => [
     state.activeTaskId,
     state.projectFiles,
@@ -167,6 +169,7 @@ export function ChatInput(args: ChatInputProps = {}) {
     state.sendUserMessage,
     state.openFileFromTree,
     state.abortTaskTurn,
+    state.refreshSkillCatalog,
   ] as const));
   const activeProvider = useAppStore((state) => (
     state.tasks.find((task) => task.id === state.activeTaskId)?.provider ?? state.draftProvider
@@ -178,6 +181,8 @@ export function ChatInput(args: ChatInputProps = {}) {
   const [
     modelClaude,
     modelCodex,
+    skillsEnabled,
+    skillsAutoSuggest,
     customCommands,
     providerTimeoutMs,
     claudePermissionMode,
@@ -200,6 +205,8 @@ export function ChatInput(args: ChatInputProps = {}) {
   ] = useAppStore(useShallow((state) => [
     state.settings.modelClaude,
     state.settings.modelCodex,
+    state.settings.skillsEnabled,
+    state.settings.skillsAutoSuggest,
     state.settings.customCommands,
     state.settings.providerTimeoutMs,
     state.settings.claudePermissionMode,
@@ -221,6 +228,7 @@ export function ChatInput(args: ChatInputProps = {}) {
     state.settings.codexPathOverride,
   ] as const));
   const providerSelectionTarget = activeTaskId || "draft:session";
+  const skillCatalog = useAppStore((state) => state.skillCatalog);
   const [draftText, setDraftText] = useState(promptDraft.text);
   const draftTextRef = useRef(promptDraft.text);
   const syncedDraftRef = useRef({
@@ -617,6 +625,19 @@ export function ChatInput(args: ChatInputProps = {}) {
     },
     providerCommandCatalog,
   }), [activeProvider, customCommands, providerCommandCatalog]);
+  const skillPalette = useMemo(() => getEffectiveSkillEntries({
+    skills: skillCatalog.skills,
+    providerId: activeProvider,
+  }), [activeProvider, skillCatalog.skills]);
+
+  useEffect(() => {
+    if (!skillsEnabled) {
+      return;
+    }
+    void refreshSkillCatalog({
+      workspacePath: workspaceCwd ?? null,
+    });
+  }, [refreshSkillCatalog, skillsEnabled, workspaceCwd]);
 
   return (
     <div
@@ -654,6 +675,9 @@ export function ChatInput(args: ChatInputProps = {}) {
           attachedFilePaths={promptDraft.attachedFilePaths}
           commandPaletteItems={commandPalette.items}
           commandPaletteProviderNote={commandPalette.providerNote}
+          skillsEnabled={skillsEnabled}
+          skillsAutoSuggest={skillsAutoSuggest}
+          skillPaletteItems={skillPalette}
           onValueChange={(value) => {
             draftTextRef.current = value;
             setDraftText(value);

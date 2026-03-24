@@ -1,0 +1,134 @@
+import { FolderOpen } from "lucide-react";
+import { useState } from "react";
+import { Button, Card, Input } from "@/components/ui";
+
+type OpenPathDialogSubmitResult = { ok: boolean; stderr?: string };
+
+type OpenPathDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit?: (inputPath: string) => Promise<OpenPathDialogSubmitResult>;
+  onSubmitPath?: (inputPath: string) => Promise<OpenPathDialogSubmitResult>;
+  onBrowse: () => Promise<void>;
+};
+
+export function OpenPathDialog(args: OpenPathDialogProps) {
+  const { open, onOpenChange, onSubmit, onSubmitPath, onBrowse } = args;
+  const [inputPath, setInputPath] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submitPath = onSubmitPath ?? onSubmit;
+
+  if (!open) {
+    return null;
+  }
+
+  function reset() {
+    setInputPath("");
+    setError("");
+    setBusy(false);
+  }
+
+  function close() {
+    reset();
+    onOpenChange(false);
+  }
+
+  async function handleSubmitPath() {
+    const trimmed = inputPath.trim();
+    if (!trimmed) {
+      return;
+    }
+    if (!submitPath) {
+      setError("Open action is unavailable.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const result = await submitPath(trimmed);
+      if (result.ok) {
+        close();
+      } else {
+        setError(result.stderr || "Failed to open path.");
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleBrowse() {
+    setBusy(true);
+    setError("");
+    try {
+      await onBrowse();
+      close();
+    } catch {
+      // User cancelled the native dialog — just stay open.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "Enter" && !busy) {
+      void handleSubmitPath();
+    }
+    if (event.key === "Escape") {
+      close();
+    }
+  }
+
+  return (
+    <div
+      className="absolute inset-0 z-50 flex items-center justify-center bg-overlay p-4 backdrop-blur-[2px]"
+      onMouseDown={close}
+    >
+      <Card
+        className="w-full max-w-md rounded-lg border-border/80 bg-card p-4 shadow-xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <h3 className="text-base font-semibold text-foreground">Open Project</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Enter a path or browse for a folder.
+        </p>
+        <div className="mt-3 flex items-center gap-2">
+          <Input
+            autoFocus
+            className="flex-1"
+            placeholder="~/projects/my-app"
+            value={inputPath}
+            onChange={(event) => {
+              setInputPath(event.target.value);
+              setError("");
+            }}
+            onKeyDown={handleKeyDown}
+            disabled={busy}
+          />
+          <Button
+            variant="outline"
+            className="shrink-0 gap-1.5"
+            onClick={() => void handleBrowse()}
+            disabled={busy}
+          >
+            <FolderOpen className="size-4" />
+            Browse
+          </Button>
+        </div>
+        {error ? (
+          <p className="mt-2 text-sm text-destructive">{error}</p>
+        ) : null}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="outline" onClick={close} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={() => void handleSubmitPath()} disabled={busy || !inputPath.trim()}>
+            {busy ? "Opening..." : "Open"}
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}

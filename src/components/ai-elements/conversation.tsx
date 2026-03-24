@@ -25,7 +25,7 @@ function toVirtualScrollBehavior(args?: ScrollToBottomArgs): "auto" | "smooth" |
 }
 
 const ConversationContext = createContext<ConversationContextValue | null>(null);
-const VIRTUAL_LIST_BOTTOM_GAP = 24;
+const VIRTUAL_LIST_BOTTOM_GAP = 48;
 
 function withExtraPaddingBottom(style: CSSProperties | undefined, extra: number): CSSProperties {
   const paddingBottom = style?.paddingBottom;

@@ -3,10 +3,12 @@ import {
   sanitizeChatMessagePayload,
   sanitizeFileContextPayload,
 } from "@/lib/file-context-sanitization";
+import type { SkillPromptContext } from "@/lib/skills/types";
 import type {
   CanonicalConversationMessage,
   CanonicalConversationRequest,
   CanonicalRetrievedContextPart,
+  CanonicalSkillContextPart,
   ProviderId,
 } from "./provider.types";
 
@@ -40,9 +42,15 @@ function cloneMessagePart(part: MessagePart): MessagePart {
   }
 }
 
-function cloneContextPart(part: FileContextPart | CanonicalRetrievedContextPart | ImageContextPart) {
+function cloneContextPart(part: FileContextPart | CanonicalRetrievedContextPart | ImageContextPart | CanonicalSkillContextPart) {
   if (part.type === "retrieved_context") {
     return { ...part };
+  }
+  if (part.type === "skill_context") {
+    return {
+      ...part,
+      skills: part.skills.map((skill) => ({ ...skill })),
+    };
   }
   if (part.type === "image_context") {
     return { ...part };
@@ -86,6 +94,7 @@ export function buildCanonicalConversationRequest(args: {
     label: string;
     mimeType: string;
   }>;
+  skillContexts?: SkillPromptContext[];
   nativeConversationId?: string | null;
   retrievedContextParts?: CanonicalRetrievedContextPart[];
 }): CanonicalConversationRequest {
@@ -114,6 +123,12 @@ export function buildCanonicalConversationRequest(args: {
   args.retrievedContextParts?.forEach((part) => {
     contextParts.push(cloneContextPart(part));
   });
+  if (args.skillContexts && args.skillContexts.length > 0) {
+    contextParts.push({
+      type: "skill_context",
+      skills: args.skillContexts.map((skill) => ({ ...skill })),
+    });
+  }
 
   return {
     turnId: args.turnId,
@@ -179,6 +194,7 @@ function toHistoryLine(args: { message: CanonicalConversationMessage }) {
 export function buildLegacyPromptFromCanonicalRequest(args: {
   request: CanonicalConversationRequest;
   includeHistory?: boolean;
+  includeSkillContext?: boolean;
 }) {
   const maxHistoryChars = 12000;
   const sections = [
@@ -211,6 +227,24 @@ export function buildLegacyPromptFromCanonicalRequest(args: {
         `label: ${part.label}`,
         `type: ${part.mimeType}`,
       );
+      return;
+    }
+
+    if (part.type === "skill_context") {
+      if (args.includeSkillContext === false || part.skills.length === 0) {
+        return;
+      }
+      sections.push("[Selected Skills]");
+      for (const skill of part.skills) {
+        sections.push(
+          `name: ${skill.name}`,
+          `slug: ${skill.slug}`,
+          `scope: ${skill.scope}`,
+          `provider: ${skill.provider}`,
+          `path: ${skill.path}`,
+          skill.instructions,
+        );
+      }
       return;
     }
 

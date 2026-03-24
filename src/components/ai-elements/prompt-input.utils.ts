@@ -25,6 +25,14 @@ export function getAcceptedCommandPaletteItem(args: {
   selectedIndex: number;
   triggerKey: "Enter" | "Tab";
 }) {
+  return getAcceptedPaletteItem(args);
+}
+
+export function getAcceptedPaletteItem<T>(args: {
+  items: readonly T[];
+  selectedIndex: number;
+  triggerKey: "Enter" | "Tab";
+}) {
   const { items, selectedIndex, triggerKey } = args;
   if (items.length === 0) {
     return null;

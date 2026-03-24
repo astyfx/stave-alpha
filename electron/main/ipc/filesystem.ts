@@ -1,14 +1,16 @@
 import { dialog, ipcMain } from "electron";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
+  FilesystemDirectoryArgsSchema,
   FilesystemFileArgsSchema,
   FilesystemRootArgsSchema,
   FilesystemWriteFileArgsSchema,
   OpenExternalArgsSchema,
 } from "./schemas";
 import { openExternalWithFallback } from "../utils/external-url";
-import { listFilesRecursive, mimeTypeFromFilePath, resolveRootFilePath, revisionFromStat } from "../utils/filesystem";
+import { listDirectoryEntries, listFilesRecursive, mimeTypeFromFilePath, resolveRootFilePath, revisionFromStat } from "../utils/filesystem";
 import { readWorkspaceSourceFiles } from "./filesystem-source-files";
 import { readWorkspaceTypeDefinitionFiles } from "./filesystem-type-libs";
 
@@ -30,6 +32,28 @@ export function registerFilesystemHandlers() {
     }
   });
 
+  ipcMain.handle("fs:resolve-path", async (_event, args: { inputPath: string }) => {
+    try {
+      let resolved = (args.inputPath ?? "").trim();
+      if (!resolved) {
+        return { ok: false, stderr: "Empty path." };
+      }
+      // Expand ~ to home directory.
+      if (resolved === "~" || resolved.startsWith("~/")) {
+        resolved = path.join(os.homedir(), resolved.slice(1));
+      }
+      resolved = path.resolve(resolved);
+      const stat = await fs.stat(resolved);
+      if (!stat.isDirectory()) {
+        return { ok: false, stderr: "Path is not a directory." };
+      }
+      const files = await listFilesRecursive({ rootPath: resolved });
+      return { ok: true, rootPath: resolved, rootName: path.basename(resolved), files };
+    } catch (error) {
+      return { ok: false, stderr: String(error) };
+    }
+  });
+
   ipcMain.handle("shell:open-external", async (_event, args: unknown) => {
     const parsed = OpenExternalArgsSchema.safeParse(args);
     if (!parsed.success) {
@@ -48,6 +72,22 @@ export function registerFilesystemHandlers() {
       return { ok: true, files };
     } catch (error) {
       return { ok: false, files: [], stderr: String(error) };
+    }
+  });
+
+  ipcMain.handle("fs:list-directory", async (_event, args: unknown) => {
+    const parsed = FilesystemDirectoryArgsSchema.safeParse(args);
+    if (!parsed.success) {
+      return { ok: false, entries: [], stderr: "Invalid directory listing request." };
+    }
+    try {
+      const entries = await listDirectoryEntries({
+        rootPath: parsed.data.rootPath,
+        directoryPath: parsed.data.directoryPath,
+      });
+      return { ok: true, entries };
+    } catch (error) {
+      return { ok: false, entries: [], stderr: String(error) };
     }
   });
 

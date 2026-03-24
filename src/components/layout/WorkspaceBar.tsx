@@ -284,7 +284,7 @@ export function WorkspaceBar() {
           <Tooltip>
             <TooltipTrigger asChild>
               <span className="inline-flex h-9 items-center gap-1.5 truncate rounded-md border border-border bg-card px-3 text-sm font-semibold text-foreground shadow-sm">
-                <WorkspaceIdentityMark workspaceName={rawWorkspaceName} />
+                <WorkspaceIdentityMark workspaceName={rawWorkspaceName} isDefault={isDefaultWorkspace} />
                 {workspaceName}
               </span>
             </TooltipTrigger>

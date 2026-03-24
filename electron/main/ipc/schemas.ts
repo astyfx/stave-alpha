@@ -2,6 +2,10 @@ import { z } from "zod";
 
 export const ProviderIdSchema = z.union([z.literal("claude-code"), z.literal("codex")]);
 
+export const SkillCatalogArgsSchema = z.object({
+  workspacePath: z.string().max(4096).optional(),
+}).strict();
+
 const RuntimeOptionsSchema = z.object({
   model: z.string().max(200).optional(),
   chatStreamingEnabled: z.boolean().optional(),
@@ -143,6 +147,20 @@ const CanonicalContextPartSchema = z.discriminatedUnion("type", [
     mimeType: z.string().max(200),
   }).strict(),
   z.object({
+    type: z.literal("skill_context"),
+    skills: z.array(z.object({
+      id: z.string().max(4096),
+      slug: z.string().max(200),
+      name: z.string().max(200),
+      description: z.string().max(10_000),
+      scope: z.union([z.literal("global"), z.literal("user"), z.literal("local")]),
+      provider: z.union([z.literal("claude-code"), z.literal("codex"), z.literal("shared")]),
+      path: z.string().max(4096),
+      invocationToken: z.string().max(300),
+      instructions: z.string().max(500_000),
+    }).strict()).max(32),
+  }).strict(),
+  z.object({
     type: z.literal("retrieved_context"),
     sourceId: z.string().max(200),
     title: z.string().max(500).optional(),
@@ -255,6 +273,11 @@ const FilesystemFilePathSchema = z.string().min(1).max(4096);
 
 export const FilesystemRootArgsSchema = z.object({
   rootPath: FilesystemRootPathSchema,
+}).strict();
+
+export const FilesystemDirectoryArgsSchema = z.object({
+  rootPath: FilesystemRootPathSchema,
+  directoryPath: z.string().max(4096).optional(),
 }).strict();
 
 export const FilesystemFileArgsSchema = z.object({

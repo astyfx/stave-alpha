@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+const PROMPT_PLACEHOLDER = "Use / for commands, $ for skills, @ to search files (Enter to send)";
+
 test("shows no-project splash when project is not selected", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -85,10 +87,10 @@ test("new task button creates a visible task item", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
-  const taskCards = page.getByTestId("task-list").locator("p.text-sm.font-medium.text-foreground");
-  const before = await taskCards.count();
-  await page.getByRole("button", { name: "new-task" }).first().click();
-  await expect(taskCards).toHaveCount(before + 1);
+  const taskMenus = page.locator('button[aria-label^="task-menu-"]');
+  const before = await taskMenus.count();
+  await page.getByTestId("session-area").getByRole("button", { name: /New Task/ }).click();
+  await expect(taskMenus).toHaveCount(before + 1);
 });
 
 test("prompt input is focused after creating a task", async ({ page }) => {
@@ -125,7 +127,54 @@ test("prompt input is focused after creating a task", async ({ page }) => {
 
   await page.getByTestId("session-area").getByRole("button", { name: /New Task/ }).click();
 
-  await expect(page.getByPlaceholder("Use / for commands, @ to search files (Enter to send)")).toBeFocused();
+  await expect(page.getByPlaceholder(PROMPT_PLACEHOLDER)).toBeFocused();
+});
+
+test("shortcut creates a new task in the selected workspace", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("stave:workspace-fallback:v1", JSON.stringify([{
+      id: "ws-main",
+      name: "main",
+      updatedAt: "2026-03-06T01:00:00.000Z",
+      snapshot: {
+        activeTaskId: "",
+        tasks: [],
+        messagesByTask: {},
+      },
+    }]));
+    window.localStorage.setItem("stave-store", JSON.stringify({
+      state: {
+        projectPath: "/tmp/stave-project",
+        workspaceRootName: "stave-project",
+        workspaces: [{ id: "ws-main", name: "main", updatedAt: "2026-03-06T01:00:00.000Z" }],
+        activeWorkspaceId: "ws-main",
+        workspaceBranchById: { "ws-main": "main" },
+        workspacePathById: { "ws-main": "/tmp/stave-project" },
+        workspaceDefaultById: { "ws-main": true },
+        activeTaskId: "",
+        tasks: [],
+        messagesByTask: {},
+      },
+      version: 0,
+    }));
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  const taskMenus = page.locator('button[aria-label^="task-menu-"]');
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "n",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+
+  await expect(page.getByPlaceholder(PROMPT_PLACEHOLDER)).toBeFocused();
+  await expect(taskMenus).toHaveCount(1);
 });
 
 test("archiving the last active task returns the chat area to the splash state", async ({ page }) => {
@@ -178,10 +227,71 @@ test("archiving the last active task returns the chat area to the splash state",
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
 
-  await page.getByRole("button", { name: "task-actions-task-1" }).click();
-  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await page.getByRole("button", { name: "archive-task-task-1" }).click();
   await expect(page.getByRole("heading", { name: "Archive Task" })).toBeVisible();
   await page.getByRole("button", { name: "Archive", exact: true }).click();
+
+  await expect(page.getByTestId("empty-splash")).toBeVisible();
+});
+
+test("shortcut archives the selected task", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("stave:workspace-fallback:v1", JSON.stringify([{
+      id: "ws-main",
+      name: "main",
+      updatedAt: "2026-03-06T01:00:00.000Z",
+      snapshot: {
+        activeTaskId: "task-1",
+        tasks: [{
+          id: "task-1",
+          title: "Task 1",
+          provider: "claude-code",
+          updatedAt: "2026-03-06T01:00:00.000Z",
+          unread: false,
+          archivedAt: null,
+        }],
+        messagesByTask: {
+          "task-1": [],
+        },
+      },
+    }]));
+    window.localStorage.setItem("stave-store", JSON.stringify({
+      state: {
+        projectPath: "/tmp/stave-project",
+        workspaceRootName: "stave-project",
+        workspaces: [{ id: "ws-main", name: "main", updatedAt: "2026-03-06T01:00:00.000Z" }],
+        activeWorkspaceId: "ws-main",
+        workspaceBranchById: { "ws-main": "main" },
+        workspacePathById: { "ws-main": "/tmp/stave-project" },
+        workspaceDefaultById: { "ws-main": true },
+        activeTaskId: "task-1",
+        tasks: [{
+          id: "task-1",
+          title: "Task 1",
+          provider: "claude-code",
+          updatedAt: "2026-03-06T01:00:00.000Z",
+          unread: false,
+          archivedAt: null,
+        }],
+        messagesByTask: {
+          "task-1": [],
+        },
+      },
+      version: 0,
+    }));
+  });
+
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "w",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
 
   await expect(page.getByTestId("empty-splash")).toBeVisible();
 });
@@ -243,7 +353,7 @@ test("stale streaming message does not show responding wave without an active tu
   await page.goto("/");
 
   await expect(page.getByLabel("Responding")).toHaveCount(0);
-  await expect(page.getByPlaceholder("Use / for commands, @ to search files (Enter to send)")).toBeEnabled();
+  await expect(page.getByPlaceholder(PROMPT_PLACEHOLDER)).toBeEnabled();
 });
 
 test("streaming-off mode still shows responding wave during active turns", async ({ page }) => {
@@ -305,7 +415,7 @@ test("streaming-off mode still shows responding wave during active turns", async
   await page.goto("/");
 
   await expect(page.getByLabel("Responding")).toHaveCount(1);
-  await expect(page.getByPlaceholder("Use / for commands, @ to search files (Enter to send)")).toBeDisabled();
+  await expect(page.getByPlaceholder(PROMPT_PLACEHOLDER)).toBeDisabled();
 });
 
 test("source control tab loads status surface", async ({ page }) => {

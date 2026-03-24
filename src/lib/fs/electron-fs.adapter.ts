@@ -1,4 +1,4 @@
-import type { WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
+import type { WorkspaceDirectoryEntry, WorkspaceFileData, WorkspaceFsAdapter, WorkspaceImageData, WorkspaceRootInfo, WorkspaceWriteResult } from "@/lib/fs/fs.types";
 
 export class ElectronFsAdapter implements WorkspaceFsAdapter {
   private rootPath: string | null = null;
@@ -43,6 +43,25 @@ export class ElectronFsAdapter implements WorkspaceFsAdapter {
     }
     this.knownFiles = result.files;
     return result.files;
+  }
+
+  async listDirectory(args: { directoryPath?: string }): Promise<WorkspaceDirectoryEntry[] | null> {
+    if (!this.rootPath) {
+      return null;
+    }
+    const listDirectory = window.api?.fs?.listDirectory;
+    if (!listDirectory) {
+      return null;
+    }
+
+    const result = await listDirectory({
+      rootPath: this.rootPath,
+      directoryPath: args.directoryPath,
+    });
+    if (!result.ok) {
+      return null;
+    }
+    return result.entries;
   }
 
   async readFile(args: { filePath: string }): Promise<WorkspaceFileData | null> {

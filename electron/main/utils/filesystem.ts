@@ -2,6 +2,16 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import type { RootFileEntry } from "../types";
 
+const IGNORED_DIRECTORY_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "out",
+  "build",
+  ".next",
+  ".nuxt",
+]);
+
 function normalizePathInput(value: string | null | undefined) {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
@@ -11,7 +21,32 @@ export function revisionFromStat(args: { size: number; mtimeMs: number }) {
 }
 
 export function isIgnoredDirectory(args: { name: string }) {
-  return args.name.startsWith(".") || args.name === "node_modules" || args.name === "dist" || args.name === "out";
+  return IGNORED_DIRECTORY_NAMES.has(args.name);
+}
+
+function toSafeRelativePath(value: string | null | undefined) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+export function resolveRootDirectoryPath(args: { rootPath?: string | null; directoryPath?: string | null }) {
+  const rootPath = normalizePathInput(args.rootPath);
+  if (!rootPath) {
+    return null;
+  }
+  const normalizedRoot = path.resolve(rootPath);
+  const directoryPath = toSafeRelativePath(args.directoryPath);
+  if (!directoryPath) {
+    return normalizedRoot;
+  }
+  const absolute = path.resolve(normalizedRoot, directoryPath);
+  const relative = path.relative(normalizedRoot, absolute);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    return null;
+  }
+  return absolute;
 }
 
 export async function listFilesRecursive(args: { rootPath?: string | null; maxDepth?: number; maxFiles?: number }): Promise<string[]> {
@@ -19,8 +54,8 @@ export async function listFilesRecursive(args: { rootPath?: string | null; maxDe
   if (!rootPath) {
     throw new Error("Workspace root path is required.");
   }
-  const maxDepth = args.maxDepth ?? 8;
-  const maxFiles = args.maxFiles ?? 1000;
+  const maxDepth = args.maxDepth ?? 32;
+  const maxFiles = args.maxFiles ?? 25_000;
   const files: RootFileEntry[] = [];
 
   async function walk(currentPath: string, prefix: string, depth: number): Promise<void> {
@@ -50,18 +85,45 @@ export async function listFilesRecursive(args: { rootPath?: string | null; maxDe
 }
 
 export function resolveRootFilePath(args: { rootPath?: string | null; filePath?: string | null }) {
-  const rootPath = normalizePathInput(args.rootPath);
   const filePath = normalizePathInput(args.filePath);
-  if (!rootPath || !filePath) {
+  if (!filePath) {
     return null;
   }
-  const normalizedRoot = path.resolve(rootPath);
-  const absolute = path.resolve(normalizedRoot, filePath);
-  const relative = path.relative(normalizedRoot, absolute);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    return null;
+  return resolveRootDirectoryPath({
+    rootPath: args.rootPath,
+    directoryPath: filePath,
+  });
+}
+
+export async function listDirectoryEntries(args: { rootPath?: string | null; directoryPath?: string | null }) {
+  const absolutePath = resolveRootDirectoryPath(args);
+  if (!absolutePath) {
+    throw new Error("Invalid directory path.");
   }
-  return absolute;
+
+  const relativeDirectoryPath = toSafeRelativePath(args.directoryPath);
+  const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+  return entries
+    .flatMap((entry) => {
+      if (entry.isDirectory()) {
+        if (isIgnoredDirectory({ name: entry.name })) {
+          return [];
+        }
+        const relativePath = relativeDirectoryPath ? `${relativeDirectoryPath}/${entry.name}` : entry.name;
+        return [{ name: entry.name, path: relativePath, type: "folder" as const }];
+      }
+      if (entry.isFile()) {
+        const relativePath = relativeDirectoryPath ? `${relativeDirectoryPath}/${entry.name}` : entry.name;
+        return [{ name: entry.name, path: relativePath, type: "file" as const }];
+      }
+      return [];
+    })
+    .sort((left, right) => {
+      if (left.type !== right.type) {
+        return left.type === "folder" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name);
+    });
 }
 
 export function mimeTypeFromFilePath(args: { filePath: string }) {

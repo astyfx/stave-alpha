@@ -4,6 +4,12 @@ export interface WorkspaceRootInfo {
   files: string[];
 }
 
+export interface WorkspaceDirectoryEntry {
+  name: string;
+  path: string;
+  type: "file" | "folder";
+}
+
 export interface WorkspaceFileData {
   content: string;
   revision: string;
@@ -24,6 +30,7 @@ export interface WorkspaceFsAdapter {
   isAvailable: () => boolean;
   pickRoot: () => Promise<WorkspaceRootInfo | null>;
   listFiles: () => Promise<string[]>;
+  listDirectory: (args: { directoryPath?: string }) => Promise<WorkspaceDirectoryEntry[] | null>;
   readFile: (args: { filePath: string }) => Promise<WorkspaceFileData | null>;
   readFileDataUrl: (args: { filePath: string }) => Promise<WorkspaceImageData | null>;
   writeFile: (args: { filePath: string; content: string; expectedRevision?: string | null }) => Promise<WorkspaceWriteResult>;

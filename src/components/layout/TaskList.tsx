@@ -1,7 +1,10 @@
-import { Check, CirclePlus, Copy, PanelLeft, Plus, RectangleEllipsis } from "lucide-react";
+import { closestCenter, DndContext, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { Check, CirclePlus, Copy, GripVertical, PanelLeft, Plus, RectangleEllipsis } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/layout/ConfirmDialog";
-import { CompactTaskItem, TaskItem } from "@/components/layout/TaskItem";
+import { CompactTaskItem, TaskItem, type TaskItemProps } from "@/components/layout/TaskItem";
 import { Badge, Button, Card, Input, Kbd, KbdGroup, KbdSeparator } from "@/components/ui";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { getProviderLabel } from "@/lib/providers/model-catalog";
@@ -11,6 +14,46 @@ import { cn } from "@/lib/utils";
 import { TASK_LIST_MIN_WIDTH, useAppStore } from "@/store/app.store";
 
 const TASK_SHORTCUT_COUNT = 10;
+
+interface SortableTaskRowProps extends TaskItemProps {
+  disabled?: boolean;
+}
+
+function SortableTaskRow({ disabled = false, ...props }: SortableTaskRowProps) {
+  const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.task.id,
+    disabled,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn("touch-pan-y", isDragging && "z-10 opacity-80")}
+    >
+      <TaskItem
+        {...props}
+        dragHandle={(
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            aria-label={`reorder-task-${props.task.id}`}
+            className={cn(
+              "inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-transparent text-muted-foreground transition-colors",
+              disabled
+                ? "cursor-default opacity-40"
+                : "cursor-grab hover:border-border/80 hover:bg-card/90 hover:text-foreground active:cursor-grabbing"
+            )}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="size-4" />
+          </button>
+        )}
+      />
+    </div>
+  );
+}
 
 export function TaskList() {
   const [taskHoverOpen, setTaskHoverOpen] = useState(false);
@@ -32,6 +75,7 @@ export function TaskList() {
   const renameTask = useAppStore((state) => state.renameTask);
   const exportTask = useAppStore((state) => state.exportTask);
   const createTask = useAppStore((state) => state.createTask);
+  const reorderTasks = useAppStore((state) => state.reorderTasks);
   const setLayout = useAppStore((state) => state.setLayout);
   const resolvedTaskListWidth = Math.max(taskListWidth, TASK_LIST_MIN_WIDTH);
 
@@ -42,6 +86,15 @@ export function TaskList() {
       ? "Cmd"
       : "Ctrl";
   const taskShortcutsEnabled = taskFilter === "active";
+  const taskReorderingEnabled = visibleTasks.length > 1;
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 6 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
   const filterOptions: Array<{ id: TaskFilter; label: string; count: number }> = [
     { id: "active", label: "Active", count: taskCounts.active },
     { id: "archived", label: "Archived", count: taskCounts.archived },
@@ -164,6 +217,19 @@ export function TaskList() {
     renameTask({ taskId: taskToRename.id, title: nextTitle });
     setTaskToRename(null);
     setRenameValue("");
+  }
+
+  function handleTaskDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) {
+      return;
+    }
+
+    reorderTasks({
+      activeTaskId: String(active.id),
+      overTaskId: String(over.id),
+      filter: taskFilter,
+    });
   }
 
   if (collapsed) {
@@ -305,32 +371,40 @@ export function TaskList() {
             </KbdGroup>
           </div>
         ) : null}
-        <div className="min-h-0 flex-1 space-y-1 overflow-auto">
-          {visibleTasks.map((task, index) => (
-            <TaskItem
-              key={task.id}
-              task={task}
-              shortcutLabel={taskShortcutsEnabled ? getTaskShortcutLabel(index) : null}
-              isActive={task.id === activeTaskId}
-              isSwitching={switchingTaskId === task.id}
-              timeAnchor={timeAnchor}
-              onSelect={() => handleTaskSelection(task.id)}
-              onRename={() => setTaskToRename({ id: task.id, title: task.title })}
-              onArchive={() => setTaskToArchive({ id: task.id, title: task.title })}
-              onExport={() => exportTask({ taskId: task.id })}
-              onViewSession={() => {
-                setCopiedSessionIdKey(null);
-                setTaskToViewSession({ id: task.id, title: task.title });
-              }}
-            />
-          ))}
+        <div className="min-h-0 flex-1 overflow-auto">
           {visibleTasks.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/70 bg-card/50 px-3 py-4 text-sm text-muted-foreground">
               {taskFilter === "active" ? "No active tasks. Archived tasks are still available in the archived view." : null}
               {taskFilter === "archived" ? "No archived tasks yet." : null}
               {taskFilter === "all" ? "No tasks yet." : null}
             </div>
-          ) : null}
+          ) : (
+            <DndContext sensors={taskSensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
+              <SortableContext items={visibleTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+                <div className="space-y-1">
+                  {visibleTasks.map((task, index) => (
+                    <SortableTaskRow
+                      key={task.id}
+                      disabled={!taskReorderingEnabled}
+                      task={task}
+                      shortcutLabel={taskShortcutsEnabled ? getTaskShortcutLabel(index) : null}
+                      isActive={task.id === activeTaskId}
+                      isSwitching={switchingTaskId === task.id}
+                      timeAnchor={timeAnchor}
+                      onSelect={() => handleTaskSelection(task.id)}
+                      onRename={() => setTaskToRename({ id: task.id, title: task.title })}
+                      onArchive={() => setTaskToArchive({ id: task.id, title: task.title })}
+                      onExport={() => exportTask({ taskId: task.id })}
+                      onViewSession={() => {
+                        setCopiedSessionIdKey(null);
+                        setTaskToViewSession({ id: task.id, title: task.title });
+                      }}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+          )}
         </div>
         <div className="mt-2 flex justify-start border-t border-border/70 pt-2">
           <Button

@@ -1,4 +1,4 @@
-import { defineConfig, externalizeDepsPlugin } from "electron-vite";
+import { defineConfig } from "electron-vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "node:path";
@@ -7,15 +7,29 @@ const srcAlias = {
   "@": path.resolve(__dirname, "./src"),
 };
 
+const mainExternalDeps = [
+  "electron",
+  "better-sqlite3",
+  "node-pty",
+  "@anthropic-ai/claude-agent-sdk",
+  "@openai/codex-sdk",
+];
+
+const preloadExternalDeps = [
+  "electron",
+];
+
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: srcAlias,
     },
     build: {
-      rollupOptions: {
-        external: ["@anthropic-ai/claude-agent-sdk", "@openai/codex-sdk"],
+      externalizeDeps: {
+        include: mainExternalDeps,
+      },
+      rolldownOptions: {
+        external: mainExternalDeps,
         input: {
           index: path.resolve(__dirname, "electron/main.ts"),
         },
@@ -23,12 +37,15 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: srcAlias,
     },
     build: {
-      rollupOptions: {
+      externalizeDeps: {
+        include: preloadExternalDeps,
+      },
+      rolldownOptions: {
+        external: preloadExternalDeps,
         input: {
           index: path.resolve(__dirname, "electron/preload.ts"),
         },
@@ -54,7 +71,7 @@ export default defineConfig({
       alias: srcAlias,
     },
     build: {
-      rollupOptions: {
+      rolldownOptions: {
         input: path.resolve(__dirname, "index.html"),
       },
     },
