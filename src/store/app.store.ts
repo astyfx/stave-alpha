@@ -202,6 +202,7 @@ export interface AppSettings {
   messageMonoFontFamily: string;
   messageKoreanFontFamily: string;
   reasoningDefaultExpanded: boolean;
+  fastModeVisible: boolean;
   modelClaude: string;
   modelCodex: string;
   rulesPresetPrimary: string;
@@ -239,6 +240,7 @@ export interface AppSettings {
   claudeEffort: "low" | "medium" | "high" | "max";
   claudeThinkingMode: "adaptive" | "enabled" | "disabled";
   claudeAgentProgressSummaries: boolean;
+  claudeFastMode: boolean;
   codexSandboxMode: "read-only" | "workspace-write" | "danger-full-access";
   codexSkipGitRepoCheck: boolean;
   codexNetworkAccessEnabled: boolean;
@@ -249,6 +251,7 @@ export interface AppSettings {
   codexShowRawAgentReasoning: boolean;
   codexReasoningSummary: "auto" | "concise" | "detailed" | "none";
   codexSupportsReasoningSummaries: "auto" | "enabled" | "disabled";
+  codexFastMode: boolean;
 }
 
 interface AppState {
@@ -379,6 +382,7 @@ const defaultSettings: AppSettings = {
   messageMonoFontFamily: "JetBrains Mono",
   messageKoreanFontFamily: "Pretendard Variable",
   reasoningDefaultExpanded: false,
+  fastModeVisible: true,
   modelClaude: getDefaultModelForProvider({ providerId: "claude-code" }),
   modelCodex: getDefaultModelForProvider({ providerId: "codex" }),
   rulesPresetPrimary: "typescript-best-practices",
@@ -416,6 +420,7 @@ const defaultSettings: AppSettings = {
   claudeEffort: "medium",
   claudeThinkingMode: "adaptive",
   claudeAgentProgressSummaries: false,
+  claudeFastMode: false,
   codexSandboxMode: "workspace-write",
   codexSkipGitRepoCheck: false,
   codexNetworkAccessEnabled: true,
@@ -426,6 +431,7 @@ const defaultSettings: AppSettings = {
   codexShowRawAgentReasoning: false,
   codexReasoningSummary: "auto",
   codexSupportsReasoningSummaries: "auto",
+  codexFastMode: true,
 };
 
 function createDefaultProviderAvailability() {
@@ -3085,6 +3091,7 @@ export const useAppStore = create<AppState>()(
             claudeEffort: get().settings.claudeEffort,
             claudeThinkingMode: get().settings.claudeThinkingMode,
             claudeAgentProgressSummaries: get().settings.claudeAgentProgressSummaries,
+            claudeFastMode: get().settings.claudeFastMode,
             ...(provider === "claude-code"
               && providerConversation?.["claude-code"]?.trim()
               ? { claudeResumeSessionId: providerConversation["claude-code"] }
@@ -3101,6 +3108,7 @@ export const useAppStore = create<AppState>()(
             codexShowRawAgentReasoning: get().settings.codexShowRawAgentReasoning,
             codexReasoningSummary: get().settings.codexReasoningSummary,
             codexSupportsReasoningSummaries: get().settings.codexSupportsReasoningSummaries,
+            codexFastMode: get().settings.codexFastMode,
             ...(provider === "codex"
               && providerConversation?.codex?.trim()
               ? { codexResumeThreadId: providerConversation.codex }

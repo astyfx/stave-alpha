@@ -957,7 +957,7 @@ export function EditorMainPanel() {
         </TooltipProvider>
       </div>
 
-      <div className="mx-2 mb-2 flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-sm border border-border/80 bg-editor text-editor-foreground shadow-sm">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-surface text-editor-foreground">
         {editorTabs.length > 0 && <div
           className="tab-strip-scroll min-w-0 w-full max-w-full flex items-end gap-0.5 overflow-x-auto border-b border-border/80 bg-transparent pt-px"
           onWheel={(event) => {

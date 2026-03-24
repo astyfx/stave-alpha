@@ -12,7 +12,6 @@ import {
   CodeBlockTitle,
   Conversation,
   ConversationContent,
-  ConversationDownload,
   ConversationScrollButton,
   ConversationVirtualList,
   ConfirmationCompact,
@@ -215,7 +214,7 @@ function ChangedFilesBlock(args: { parts: CodeDiffPart[]; taskId: string; messag
           </span>
           <ChangeCount value={totalAdded} tone="added" />
           <ChangeCount value={totalRemoved} tone="removed" />
-          {pendingCount > 0 ? <Badge variant="warning">{pendingCount} pending</Badge> : null}
+          {pendingCount > 0 ? <Badge variant="destructive">{pendingCount} pending</Badge> : null}
         </div>
         <Button
           type="button"
@@ -542,7 +541,7 @@ function BackgroundActionsSummary(args: { parts: MessagePart[]; onOpenReplay?: (
             {summary.totalActions} {summary.totalActions === 1 ? "background action" : "background actions"}
           </p>
           {statusLabel ? (
-            <Badge variant={summary.activeActions > 0 ? "warning" : "destructive"}>
+            <Badge variant="destructive">
               {statusLabel}
             </Badge>
           ) : null}
@@ -800,7 +799,7 @@ const MessageRow = memo(function MessageRow(args: MessageRowProps) {
                 <MessageAction
                   key="provider-action"
                   label={toProviderStartCase({ providerId: message.providerId })}
-                  className="pointer-events-none h-7 cursor-default rounded-sm border border-border/70 bg-muted/60 px-2 text-sm font-normal text-foreground opacity-100"
+                  className="pointer-events-none h-7 cursor-default rounded-sm border border-border/70 bg-white dark:bg-white/[0.06] px-2 text-sm font-normal text-foreground opacity-100"
                 >
                   <ModelIcon providerId={message.providerId} className="size-3.5" />
                   {toProviderStartCase({ providerId: message.providerId })}
@@ -859,7 +858,7 @@ function ChatPanelHeader(args: {
 
   return (
     <>
-      <header className="flex h-10 items-center justify-between border-b border-border/80 px-3 text-sm">
+      <header className="flex h-10 items-center justify-between border-b border-border/80 bg-card px-3 text-sm">
         <div className="flex min-w-0 items-center gap-2">
           <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="truncate font-medium text-foreground">{activeTaskTitle}</span>
@@ -974,18 +973,6 @@ function ChatPanelMessageList(args: {
 
 const MemoizedChatPanelMessageList = memo(ChatPanelMessageList);
 
-function ChatPanelDownloadButton() {
-  const messages = useAppStore((state) => state.messagesByTask[state.activeTaskId] ?? EMPTY_MESSAGES);
-  const conversationDownloadRows = useMemo(() => messages.map((message) => ({
-    role: message.role,
-    content: message.isPlanResponse
-      ? `[Plan]\n${message.planText?.trim() || message.content}`
-      : message.content,
-  })), [messages]);
-
-  return <ConversationDownload messages={conversationDownloadRows} tooltip="Export conversation" />;
-}
-
 export function ChatPanel() {
   const [sessionReplayOpen, setSessionReplayOpen] = useState(false);
   const replayRequestKeyRef = useRef(0);
@@ -1007,7 +994,6 @@ export function ChatPanel() {
         <MemoizedChatPanelMessageList onOpenSessionReplay={openSessionReplay} />
       </div>
       <SessionReplayDrawer open={sessionReplayOpen} onOpenChange={setSessionReplayOpen} request={sessionReplayRequest} />
-      <ChatPanelDownloadButton />
       <ConversationScrollButton tooltip="Scroll to bottom" />
     </Conversation>
   );

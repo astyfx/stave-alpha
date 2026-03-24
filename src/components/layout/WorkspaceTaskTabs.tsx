@@ -123,7 +123,7 @@ export function WorkspaceTaskTabs() {
 
   return (
     <>
-      <div className="border-b border-border/70 bg-card/70 px-3 py-2">
+      <div className="border-b border-border/70 bg-background px-3 py-2">
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1 overflow-x-auto">
             <div className="flex min-w-max items-center gap-2">
@@ -205,12 +205,23 @@ export function WorkspaceTaskTabs() {
                   );
                 })
               )}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-11 w-11 shrink-0 rounded-md p-0"
+                      onClick={() => createTask({ title: "" })}
+                    >
+                      <Plus className="size-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">New Task</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
           </div>
-          <Button size="sm" className="h-9 shrink-0 gap-2" onClick={() => createTask({ title: "" })}>
-            <Plus className="size-4" />
-            New Task
-          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-9 shrink-0">

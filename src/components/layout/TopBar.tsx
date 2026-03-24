@@ -3,6 +3,8 @@ import { Suspense, lazy, useCallback, useEffect, useState, type CSSProperties } 
 import { useShallow } from "zustand/react/shallow";
 import { Card, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui";
 import { useAppStore } from "@/store/app.store";
+import { TopBarBranchDropdown } from "@/components/layout/TopBarBranchDropdown";
+import { TopBarOpenPR } from "@/components/layout/TopBarOpenPR";
 import { TopBarUtilityActions } from "@/components/layout/TopBarUtilityActions";
 import { TopBarWindowControls } from "@/components/layout/TopBarWindowControls";
 
@@ -129,9 +131,10 @@ export function TopBar() {
         className="relative z-30 flex h-12 items-center justify-between border-b border-border/70 bg-card px-3.5"
         style={TOP_BAR_DRAG_STYLE}
       >
-        <div className="min-w-0 flex-1 pr-[18rem]">
-          {activeWorkspacePath ? (
-            <TooltipProvider>
+        <div className="flex min-w-0 flex-1 items-center gap-2 pr-[18rem]">
+          <TooltipProvider>
+            <TopBarBranchDropdown noDragStyle={TOP_BAR_NO_DRAG_STYLE} />
+            {activeWorkspacePath ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <div
@@ -144,8 +147,9 @@ export function TopBar() {
                 </TooltipTrigger>
                 <TooltipContent side="bottom">{activeWorkspacePath}</TooltipContent>
               </Tooltip>
-            </TooltipProvider>
-          ) : null}
+            ) : null}
+            <TopBarOpenPR noDragStyle={TOP_BAR_NO_DRAG_STYLE} />
+          </TooltipProvider>
         </div>
         <div
           className="absolute right-0 top-0 z-20 flex h-12 shrink-0 items-center"

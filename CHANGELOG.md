@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.15](https://github.com/astyfx/stave/compare/v0.0.14...v0.0.15) (2026-03-24)
+
+### Highlights
+
+- upgraded the bundled Claude and Codex SDK integrations to `@anthropic-ai/claude-agent-sdk` `0.2.81` and `@openai/codex-sdk` `0.116.0`, and wired both runtimes through the app's typed IPC/runtime option contracts
+- added provider-aware Fast mode controls so Claude `/fast` and Codex `features.fast_mode` can be toggled from the composer, shown or hidden from Chat settings, and managed independently in Provider settings
+- expanded the composer attachment flow with clipboard image paste support, plus refreshed the docs index and README to surface the new attachments guide
+- refined workspace and top-bar ergonomics with branch badges on default workspaces, a compact new-task affordance in task tabs, safer workspace close loading states, and dedicated branch/Open PR top-bar actions
+- cleaned up the chat and editor surfaces by removing the floating conversation export button, improving auto-scroll stickiness, simplifying panel chrome, and making SCM commit actions easier to reach
+- hardened filesystem traversal against unreadable system directories so recursive scans and folder listings skip permission errors instead of failing the UI
+
 ## [0.0.14](https://github.com/astyfx/stave/compare/v0.0.13...v0.0.14) (2026-03-24)
 
 ### Features

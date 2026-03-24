@@ -33,7 +33,7 @@ export interface TurnReplayHeaderMeta {
   detailLoading: boolean;
   error: string | null;
   statusLabel: string | null;
-  statusVariant: "destructive" | "warning" | "secondary" | null;
+  statusVariant: "destructive" | "secondary" | null;
   totalEvents: number | null;
   previewEventCount: number | null;
   isLatest: boolean;
@@ -98,7 +98,7 @@ function getStatusBadgeVariant(status: "running" | "completed" | "error" | "trun
       return "destructive";
     case "truncated":
     case "interrupted":
-      return "warning";
+      return "secondary";
     default:
       return "secondary";
   }
@@ -173,7 +173,7 @@ function ReplayEventDetail(args: { item: ReplayedTurnEvent }) {
       return (
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
-            <Badge variant={event.state === "output-error" ? "destructive" : event.state === "input-streaming" ? "warning" : "secondary"}>
+            <Badge variant={event.state === "output-error" ? "destructive" : "secondary"}>
               {event.state}
             </Badge>
             {event.toolUseId ? <Badge variant="outline">{event.toolUseId}</Badge> : null}
@@ -193,7 +193,7 @@ function ReplayEventDetail(args: { item: ReplayedTurnEvent }) {
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             {event.isError ? <Badge variant="destructive">Error</Badge> : null}
-            {event.isPartial ? <Badge variant="warning">Partial</Badge> : null}
+            {event.isPartial ? <Badge variant="secondary">Partial</Badge> : null}
             <Badge variant="outline">{event.tool_use_id}</Badge>
           </div>
           <ReplayEventDetailBlock label="Result output">
@@ -206,7 +206,7 @@ function ReplayEventDetail(args: { item: ReplayedTurnEvent }) {
         <div className="space-y-2">
           <div className="flex flex-wrap gap-2">
             <Badge variant="outline">{event.filePath}</Badge>
-            {event.status ? <Badge variant={event.status === "pending" ? "warning" : "secondary"}>{event.status}</Badge> : null}
+            {event.status ? <Badge variant="secondary">{event.status}</Badge> : null}
           </div>
           <ReplayEventDetailBlock label="Change payload">
             <p>old {event.oldContent.length} chars · new {event.newContent.length} chars</p>
@@ -1145,7 +1145,7 @@ export function TurnDiagnosticsPanel(args: TurnDiagnosticsPanelProps) {
               {!summary && selectedTurnPreviewStatus ? <Badge variant={getStatusBadgeVariant(selectedTurnPreviewStatus)}>{getStatusLabel(selectedTurnPreviewStatus)}</Badge> : null}
               {summary ? <Badge variant="secondary">{summary.totalEvents} events</Badge> : selectedTurn ? <Badge variant="secondary">{selectedTurn.eventCount} events</Badge> : null}
               {selectedTurnIsLatest ? <Badge variant="outline">Latest</Badge> : null}
-              {selectedTurnIsLive ? <Badge variant="warning">Live</Badge> : null}
+              {selectedTurnIsLive ? <Badge variant="secondary">Live</Badge> : null}
             </div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
               {state.loading ? <span>Loading session replay...</span> : null}

@@ -532,7 +532,7 @@ function RulesSection() {
 }
 
 function ChatSection() {
-  const [smartSuggestions, chatSendPreview, chatStreamingEnabled, messageFontSize, messageCodeFontSize, messageFontFamily, messageMonoFontFamily, messageKoreanFontFamily, reasoningDefaultExpanded] = useAppStore(
+  const [smartSuggestions, chatSendPreview, chatStreamingEnabled, messageFontSize, messageCodeFontSize, messageFontFamily, messageMonoFontFamily, messageKoreanFontFamily, reasoningDefaultExpanded, fastModeVisible] = useAppStore(
     useShallow((state) => [
       state.settings.smartSuggestions,
       state.settings.chatSendPreview,
@@ -543,6 +543,7 @@ function ChatSection() {
       state.settings.messageMonoFontFamily,
       state.settings.messageKoreanFontFamily,
       state.settings.reasoningDefaultExpanded,
+      state.settings.fastModeVisible,
     ] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -652,6 +653,19 @@ function ChatSection() {
               options={[
                 { value: "on", label: "Expanded" },
                 { value: "off", label: "Collapsed" },
+              ]}
+            />
+          </LabeledField>
+          <LabeledField
+            title="Show Fast Mode Toggle"
+            description="Show the Fast mode toggle button next to the model selector. The toggle controls on/off per provider separately in the Providers section."
+          >
+            <ChoiceButtons
+              value={fastModeVisible ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { fastModeVisible: value === "on" } })}
+              options={[
+                { value: "on", label: "Show" },
+                { value: "off", label: "Hide" },
               ]}
             />
           </LabeledField>
@@ -1076,6 +1090,7 @@ function ProvidersSection() {
     claudeEffort,
     claudeThinkingMode,
     claudeAgentProgressSummaries,
+    claudeFastMode,
     codexSandboxMode,
     codexSkipGitRepoCheck,
     codexNetworkAccessEnabled,
@@ -1085,6 +1100,7 @@ function ProvidersSection() {
     codexShowRawAgentReasoning,
     codexReasoningSummary,
     codexSupportsReasoningSummaries,
+    codexFastMode,
   ] = useAppStore(
     useShallow((state) => [
       state.settings.providerTimeoutMs,
@@ -1095,6 +1111,7 @@ function ProvidersSection() {
       state.settings.claudeEffort,
       state.settings.claudeThinkingMode,
       state.settings.claudeAgentProgressSummaries,
+      state.settings.claudeFastMode,
       state.settings.codexSandboxMode,
       state.settings.codexSkipGitRepoCheck,
       state.settings.codexNetworkAccessEnabled,
@@ -1104,6 +1121,7 @@ function ProvidersSection() {
       state.settings.codexShowRawAgentReasoning,
       state.settings.codexReasoningSummary,
       state.settings.codexSupportsReasoningSummaries,
+      state.settings.codexFastMode,
     ] as const),
   );
   const updateSettings = useAppStore((state) => state.updateSettings);
@@ -1240,6 +1258,19 @@ function ProvidersSection() {
             <ChoiceButtons
               value={claudeAgentProgressSummaries ? "on" : "off"}
               onChange={(value) => updateSettings({ patch: { claudeAgentProgressSummaries: value === "on" } })}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
+          </LabeledField>
+          <LabeledField
+            title="Fast Mode"
+            description="Enables Claude's /fast mode, which uses Haiku for faster responses on simpler tasks."
+          >
+            <ChoiceButtons
+              value={claudeFastMode ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { claudeFastMode: value === "on" } })}
               options={[
                 { value: "on", label: "On" },
                 { value: "off", label: "Off" },
@@ -1420,6 +1451,19 @@ function ProvidersSection() {
                 <SelectItem value="live">live</SelectItem>
               </SelectContent>
             </Select>
+          </LabeledField>
+          <LabeledField
+            title="Fast Mode"
+            description="Enables Codex fast_mode feature flag for faster responses on simpler tasks."
+          >
+            <ChoiceButtons
+              value={codexFastMode ? "on" : "off"}
+              onChange={(value) => updateSettings({ patch: { codexFastMode: value === "on" } })}
+              options={[
+                { value: "on", label: "On" },
+                { value: "off", label: "Off" },
+              ]}
+            />
           </LabeledField>
         </SettingsCard>
       </SectionStack>

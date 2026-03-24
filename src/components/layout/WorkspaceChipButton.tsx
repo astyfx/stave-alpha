@@ -9,6 +9,7 @@ const CHIP_NO_DRAG_STYLE = { WebkitAppRegion: "no-drag" } as CSSProperties;
 interface WorkspaceChipButtonProps {
   workspaceId: string;
   workspaceName: string;
+  branch?: string;
   isActive: boolean;
   isDefault: boolean;
   isSwitching: boolean;
@@ -20,6 +21,7 @@ interface WorkspaceChipButtonProps {
 export const WorkspaceChipButton = memo(function WorkspaceChipButton({
   workspaceId,
   workspaceName,
+  branch,
   isActive,
   isDefault,
   isSwitching,
@@ -28,7 +30,8 @@ export const WorkspaceChipButton = memo(function WorkspaceChipButton({
   onDelete,
 }: WorkspaceChipButtonProps) {
   const accentTone = getWorkspaceAccentTone({ workspaceName, isDefault });
-  const label = isDefault && workspaceName.toLowerCase() === "default workspace" ? "Default" : workspaceName;
+  const isDefaultLabel = isDefault && workspaceName.toLowerCase() === "default workspace";
+  const label = isDefaultLabel ? "Default" : workspaceName;
 
   return (
     <Tooltip>
@@ -61,6 +64,11 @@ export const WorkspaceChipButton = memo(function WorkspaceChipButton({
             <WorkspaceIdentityMark workspaceName={workspaceName} isDefault={isDefault} />
           )}
           <span className="max-w-24 truncate">{label}</span>
+          {isDefaultLabel && branch ? (
+            <span className="max-w-16 truncate rounded border border-border/60 bg-muted/60 px-1 py-px text-[10px] font-medium leading-tight text-muted-foreground">
+              {branch}
+            </span>
+          ) : null}
           {!isDefault && workspaceId !== "base" ? (
             <span
               className="rounded px-1 text-sm text-muted-foreground hover:bg-secondary"
@@ -74,7 +82,9 @@ export const WorkspaceChipButton = memo(function WorkspaceChipButton({
           ) : null}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
+      <TooltipContent side="bottom">
+        {label}{isDefaultLabel && branch ? <span className="ml-1 rounded border border-border/60 bg-muted/60 px-1 py-px text-[10px] font-medium leading-tight">{branch}</span> : null}
+      </TooltipContent>
     </Tooltip>
   );
 });

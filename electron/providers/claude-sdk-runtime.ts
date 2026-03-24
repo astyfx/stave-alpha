@@ -828,6 +828,7 @@ export async function getClaudeCommandCatalog(args: {
         ...(agentProgressSummaries !== undefined ? { agentProgressSummaries } : {}),
         ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
         ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
+        ...(args.runtimeOptions?.claudeFastMode ? { settings: { fastMode: true } } : {}),
         sandbox: {
           enabled: claudeSandboxEnabled,
           allowUnsandboxedCommands: claudeAllowUnsandboxedCommands,
@@ -1001,6 +1002,7 @@ export async function streamClaudeWithSdk(args: StreamTurnArgs & {
         ...(agentProgressSummaries !== undefined ? { agentProgressSummaries } : {}),
         ...(args.runtimeOptions?.claudeAllowedTools ? { allowedTools: args.runtimeOptions.claudeAllowedTools } : {}),
         ...(args.runtimeOptions?.claudeDisallowedTools ? { disallowedTools: args.runtimeOptions.claudeDisallowedTools } : {}),
+        ...(args.runtimeOptions?.claudeFastMode ? { settings: { fastMode: true } } : {}),
         canUseTool: async (toolName, input, options) => {
           const normalizedInput = normalizeClaudeToolInput(input);
           const requestId = options.toolUseID;

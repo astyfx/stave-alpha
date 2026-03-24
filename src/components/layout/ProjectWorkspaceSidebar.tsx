@@ -16,13 +16,25 @@ import { useAppStore } from "@/store/app.store";
 interface ProjectSidebarView {
   projectPath: string;
   projectName: string;
-  workspaces: Array<{ id: string; name: string; isDefault: boolean }>;
+  workspaces: Array<{ id: string; name: string; isDefault: boolean; branch?: string }>;
   activeWorkspaceId: string;
   isCurrent: boolean;
 }
 
-function formatWorkspaceName(name: string) {
-  return name.toLowerCase() === "default workspace" ? "Default" : name;
+function formatWorkspaceName(name: string, branch?: string) {
+  if (name.toLowerCase() === "default workspace") {
+    return (
+      <>
+        Default
+        {branch ? (
+          <span className="ml-1 inline-flex max-w-20 truncate rounded border border-border/60 bg-muted/60 px-1 py-px text-[10px] font-medium leading-tight text-muted-foreground">
+            {branch}
+          </span>
+        ) : null}
+      </>
+    );
+  }
+  return name;
 }
 
 const COLLAPSED_PROJECT_SIDEBAR_WIDTH = 64;
@@ -80,6 +92,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
   const [openPathDialogOpen, setOpenPathDialogOpen] = useState(false);
   const [projectToRemove, setProjectToRemove] = useState<{ projectPath: string; projectName: string } | null>(null);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
+  const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
   const [
     currentProjectPath,
     currentProjectName,
@@ -87,6 +100,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
     activeWorkspaceId,
     recentProjects,
     workspaceDefaultById,
+    workspaceBranchById,
     workspaceRuntimeCacheById,
     tasks,
     activeTurnIdsByTask,
@@ -110,6 +124,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
     state.activeWorkspaceId,
     state.recentProjects,
     state.workspaceDefaultById,
+    state.workspaceBranchById,
     state.workspaceRuntimeCacheById,
     state.tasks,
     state.activeTurnIdsByTask,
@@ -137,6 +152,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
             id: workspace.id,
             name: workspace.name,
             isDefault: Boolean(workspaceDefaultById[workspace.id]),
+            branch: workspaceBranchById[workspace.id],
           })),
           activeWorkspaceId,
           isCurrent: true,
@@ -150,6 +166,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
           id: workspace.id,
           name: workspace.name,
           isDefault: Boolean(project.workspaceDefaultById[workspace.id]),
+          branch: project.workspaceBranchById[workspace.id],
         })),
         activeWorkspaceId: project.activeWorkspaceId,
         isCurrent: project.projectPath === currentProjectPath,
@@ -167,7 +184,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
     return rememberedProjects.map((project) => (
       project.projectPath === currentProjectPath ? currentProject : project
     ));
-  }, [activeWorkspaceId, currentProjectName, currentProjectPath, recentProjects, workspaceDefaultById, workspaces]);
+  }, [activeWorkspaceId, currentProjectName, currentProjectPath, recentProjects, workspaceBranchById, workspaceDefaultById, workspaces]);
   const collapsedWorkspaceEntries = useMemo(() => projects.flatMap((project) => (
     project.workspaces.map((workspace) => ({
       projectPath: project.projectPath,
@@ -175,6 +192,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
       workspaceId: workspace.id,
       workspaceName: workspace.name,
       isDefault: workspace.isDefault,
+      branch: workspace.branch,
       isActive: project.isCurrent && workspace.id === activeWorkspaceId,
     }))
   )), [activeWorkspaceId, projects]);
@@ -402,7 +420,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
                       </TooltipTrigger>
                       <TooltipContent side="right" className="max-w-[220px]">
                         <div className="space-y-1">
-                          <p className="text-sm font-medium">{formatWorkspaceName(entry.workspaceName)}</p>
+                          <p className="text-sm font-medium">{formatWorkspaceName(entry.workspaceName, entry.branch)}</p>
                           <p className="text-xs text-muted-foreground">{entry.projectName}</p>
                         </div>
                       </TooltipContent>
@@ -603,7 +621,7 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
                                                           <WorkspaceIdentityMark workspaceName={workspace.name} isDefault={workspace.isDefault} />
                                                         )}
                                                       </span>
-                                                      <span className="min-w-0 flex-1 truncate">{formatWorkspaceName(workspace.name)}</span>
+                                                      <span className="min-w-0 flex-1 truncate">{formatWorkspaceName(workspace.name, workspace.branch)}</span>
                                                       {isResponding ? (
                                                         <span className="shrink-0 rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-primary">
                                                           {respondingTaskCount}
@@ -619,13 +637,18 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
                                                             variant="ghost"
                                                             size="sm"
                                                             className="h-8 w-8 rounded-md p-0 text-muted-foreground hover:text-destructive"
+                                                            disabled={deletingWorkspaceId === workspace.id}
                                                             onClick={() => setWorkspaceToDelete({
                                                               id: workspace.id,
                                                               name: workspace.name,
                                                             })}
                                                             aria-label={`delete-workspace-${workspace.id}`}
                                                           >
-                                                            <X className="size-3.5" />
+                                                            {deletingWorkspaceId === workspace.id ? (
+                                                              <LoaderCircle className="size-3.5 animate-spin" />
+                                                            ) : (
+                                                              <X className="size-3.5" />
+                                                            )}
                                                           </Button>
                                                         </TooltipTrigger>
                                                         <TooltipContent side="right">Close workspace</TooltipContent>
@@ -674,13 +697,17 @@ export function ProjectWorkspaceSidebar(args: { width: number; collapsed: boolea
         title="Close Workspace"
         description={workspaceToDelete ? `Close workspace "${workspaceToDelete.name}"? The associated git worktree will be permanently removed. Any uncommitted changes will be lost.` : ""}
         confirmLabel="Close Workspace"
+        loading={deletingWorkspaceId !== null}
         onCancel={() => setWorkspaceToDelete(null)}
         onConfirm={() => {
           if (!workspaceToDelete) {
             return;
           }
-          void deleteWorkspace({ workspaceId: workspaceToDelete.id });
-          setWorkspaceToDelete(null);
+          setDeletingWorkspaceId(workspaceToDelete.id);
+          void deleteWorkspace({ workspaceId: workspaceToDelete.id }).finally(() => {
+            setDeletingWorkspaceId(null);
+            setWorkspaceToDelete(null);
+          });
         }}
       />
       <CreateWorkspaceDialog

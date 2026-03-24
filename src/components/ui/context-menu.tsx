@@ -155,7 +155,8 @@ function ContextMenuCheckboxItem({
     >
       <span className="pointer-events-none absolute right-2">
         <ContextMenuPrimitive.ItemIndicator>
-          <CheckIcon />
+          <CheckIcon
+          />
         </ContextMenuPrimitive.ItemIndicator>
       </span>
       {children}
@@ -183,7 +184,8 @@ function ContextMenuRadioItem({
     >
       <span className="pointer-events-none absolute right-2">
         <ContextMenuPrimitive.ItemIndicator>
-          <CheckIcon />
+          <CheckIcon
+          />
         </ContextMenuPrimitive.ItemIndicator>
       </span>
       {children}

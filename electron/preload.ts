@@ -34,6 +34,7 @@ interface StreamTurnArgs {
     claudeEffort?: "low" | "medium" | "high" | "max";
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAgentProgressSummaries?: boolean;
+    claudeFastMode?: boolean;
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
     claudeResumeSessionId?: string;
@@ -47,6 +48,7 @@ interface StreamTurnArgs {
     codexShowRawAgentReasoning?: boolean;
     codexReasoningSummary?: "auto" | "concise" | "detailed" | "none";
     codexSupportsReasoningSummaries?: "auto" | "enabled" | "disabled";
+    codexFastMode?: boolean;
     codexResumeThreadId?: string;
   };
 }

@@ -15,8 +15,8 @@ import path from "node:path";
 const threadByTask = new Map<string, Thread>();
 const threadIdByTask = new Map<string, string>();
 
-const SUPPORTED_CODEX_SDK_VERSION = "0.115.0";
-const SUPPORTED_CODEX_CLI_VERSION = "0.115.0";
+const SUPPORTED_CODEX_SDK_VERSION = "0.116.0";
+const SUPPORTED_CODEX_CLI_VERSION = "0.116.0";
 
 function parseBooleanEnv(args: { value: string | undefined; fallback: boolean }) {
   const normalized = args.value?.trim().toLowerCase();
@@ -140,6 +140,11 @@ export function buildCodexConfigOverrides(args: {
     config.model_supports_reasoning_summaries = true;
   } else if (supportsSummaries === "disabled") {
     config.model_supports_reasoning_summaries = false;
+  }
+
+  const codexFastMode = args.runtimeOptions?.codexFastMode;
+  if (codexFastMode !== undefined) {
+    config["features.fast_mode"] = codexFastMode;
   }
 
   return Object.keys(config).length > 0 ? config : undefined;

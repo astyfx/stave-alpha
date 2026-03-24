@@ -1,4 +1,4 @@
-import { Camera, Check, FilePlus2, FolderOpen, Globe2, LoaderCircle, OctagonX, Send, SlidersHorizontal, Sparkles, UserRound, X } from "lucide-react";
+import { Camera, Check, FilePlus2, FolderOpen, Globe2, LoaderCircle, OctagonX, Send, SlidersHorizontal, Sparkles, UserRound, X, Zap } from "lucide-react";
 import type { Attachment } from "@/types/chat";
 import { type FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Command, CommandEmpty, CommandGroup, CommandItem, CommandList, Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle, DrawerTrigger, Input, Popover, PopoverAnchor, PopoverContent, Textarea } from "@/components/ui";
@@ -36,6 +36,8 @@ interface PromptInputProps {
   onAttachmentsChange?: (args: { attachments: Attachment[] }) => void;
   onCaptureScreenshot?: () => void;
   onPermissionModeChange?: (value: PermissionModeValue) => void;
+  fastMode?: boolean;
+  onFastModeChange?: (enabled: boolean) => void;
   onSubmit: (args: { text: string; filePaths: string[] }) => void | Promise<void>;
   onAbort?: () => void;
 }
@@ -65,6 +67,8 @@ export function PromptInput(args: PromptInputProps) {
     onAttachmentsChange,
     onCaptureScreenshot,
     onPermissionModeChange,
+    fastMode,
+    onFastModeChange,
     onSubmit,
     onAbort,
   } = args;
@@ -325,6 +329,46 @@ export function PromptInput(args: PromptInputProps) {
               onClick={(event) => syncCaretPosition(event.currentTarget)}
               onKeyUp={(event) => syncCaretPosition(event.currentTarget)}
               onSelect={(event) => syncCaretPosition(event.currentTarget)}
+              onPaste={(event) => {
+                const items = event.clipboardData?.items;
+                if (!items || !onAttachmentsChange) {
+                  return;
+                }
+                const imageFiles: File[] = [];
+                for (const item of items) {
+                  if (item.type.startsWith("image/")) {
+                    const file = item.getAsFile();
+                    if (file) {
+                      imageFiles.push(file);
+                    }
+                  }
+                }
+                if (imageFiles.length === 0) {
+                  return;
+                }
+                event.preventDefault();
+                Promise.all(
+                  imageFiles.map(
+                    (file) =>
+                      new Promise<Extract<Attachment, { kind: "image" }>>((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          resolve({
+                            kind: "image",
+                            id: crypto.randomUUID(),
+                            dataUrl: reader.result as string,
+                            label: file.name || "Pasted image",
+                          });
+                        };
+                        reader.readAsDataURL(file);
+                      }),
+                  ),
+                ).then((newImages) => {
+                  onAttachmentsChange({
+                    attachments: [...(attachments ?? []), ...newImages],
+                  });
+                });
+              }}
               onKeyDown={(event) => {
                 if (activePalette === "skill" && filteredSkillItems.length > 0 && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
                   if (event.key === "ArrowDown") {
@@ -720,6 +764,24 @@ export function PromptInput(args: PromptInputProps) {
             disabled={interactionsDisabled}
             onSelect={({ selection }) => onModelSelect({ selection })}
           />
+          {onFastModeChange ? (
+            <button
+              type="button"
+              disabled={interactionsDisabled}
+              onClick={() => onFastModeChange(!fastMode)}
+              title={fastMode ? "Fast mode ON — faster responses with smaller model" : "Fast mode OFF"}
+              className={cn(
+                "inline-flex h-9 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors",
+                fastMode
+                  ? "border-amber-500/60 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25"
+                  : "border-border/70 bg-secondary text-muted-foreground hover:bg-secondary/60",
+                interactionsDisabled && "cursor-not-allowed opacity-60",
+              )}
+            >
+              <Zap className={cn("size-3.5", fastMode && "fill-amber-400")} />
+              <span>Fast</span>
+            </button>
+          ) : null}
           {hasControlsDrawerContent ? (
             <Drawer direction="bottom">
               <DrawerTrigger asChild>

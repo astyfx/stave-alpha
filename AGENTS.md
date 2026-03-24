@@ -84,6 +84,22 @@ React renderer         →  src/
 - **Renderer** code must never import Node-only modules directly. All Node access goes through the IPC bridge defined in `window-api.d.ts`.
 - **Provider runtimes** live in `electron/providers/`. When modifying one adapter, check the other for symmetry.
 
+### Provider Schema Guardrails
+
+- Treat `runtimeOptions` and all provider IPC payloads as **multi-file contracts**, not local types.
+- When adding, renaming, or deleting any provider runtime option or IPC field, update the same change across:
+  - `electron/providers/types.ts`
+  - `src/lib/providers/provider.types.ts`
+  - `electron/preload.ts`
+  - `src/types/window-api.d.ts`
+  - `electron/main/ipc/schemas.ts`
+  - any producer/consumer call sites such as `src/store/app.store.ts` and session/input UI
+- `electron/main/ipc/schemas.ts` uses strict Zod schemas. A new field that is not added there can break both providers at runtime even when TypeScript still passes elsewhere.
+- Do not ship a new runtime option unless the end-to-end path has been checked from renderer call site → preload contract → IPC schema → main/provider runtime.
+- After touching provider option schemas or IPC contracts, run `bun run typecheck` before finishing. If provider runtime code changed, also do a smoke check that both Claude and Codex can still start a turn or load their runtime entry path.
+- When upgrading `@anthropic-ai/claude-agent-sdk`, `@openai/codex-sdk`, or the Codex/Claude CLI expectations, verify new option names and object shapes against the installed package types/docs in `node_modules` before wiring them into Stave. Do not assume flag names from memory.
+- If a change is intentionally provider-specific, note that explicitly in code or the final handoff. Otherwise, review the sibling provider adapter for symmetry.
+
 ## Code Conventions
 
 - **Import paths:** always use `@/...` alias, never bare `../../` from `src/`.

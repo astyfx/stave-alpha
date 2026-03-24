@@ -73,9 +73,10 @@ export function WorkspaceBar() {
 
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const rawWorkspaceName = activeWorkspace?.name ?? "Default Workspace";
-  const workspaceName = rawWorkspaceName.toLowerCase() === "default workspace" ? "Default" : rawWorkspaceName;
   const isDefaultWorkspace = Boolean(workspaceDefaultById[activeWorkspaceId]);
   const activeWorkspaceBranch = workspaceBranchById[activeWorkspaceId];
+  const isDefaultLabel = rawWorkspaceName.toLowerCase() === "default workspace";
+  const workspaceName = isDefaultLabel ? "Default" : rawWorkspaceName;
 
   const workspaceCwd = workspacePathById[activeWorkspaceId] ?? projectPath ?? undefined;
   const workspacePathLabel = formatWorkspacePathLabel({
@@ -286,9 +287,16 @@ export function WorkspaceBar() {
               <span className="inline-flex h-9 items-center gap-1.5 truncate rounded-md border border-border bg-card px-3 text-sm font-semibold text-foreground shadow-sm">
                 <WorkspaceIdentityMark workspaceName={rawWorkspaceName} isDefault={isDefaultWorkspace} />
                 {workspaceName}
+                {isDefaultLabel && activeWorkspaceBranch ? (
+                  <span className="rounded border border-border/60 bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-muted-foreground">
+                    {activeWorkspaceBranch}
+                  </span>
+                ) : null}
               </span>
             </TooltipTrigger>
-            <TooltipContent side="bottom">{workspaceName}</TooltipContent>
+            <TooltipContent side="bottom">
+              {workspaceName}{isDefaultLabel && activeWorkspaceBranch ? <span className="ml-1 rounded border border-border/60 bg-muted/60 px-1 py-px text-[10px] font-medium leading-tight">{activeWorkspaceBranch}</span> : null}
+            </TooltipContent>
           </Tooltip>
           {isDefaultWorkspace ? (
             <DropdownMenu open={branchOpen} onOpenChange={setBranchOpen}>

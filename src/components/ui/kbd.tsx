@@ -1,7 +1,6 @@
-import type { ComponentProps } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
 
-function Kbd({ className, ...props }: ComponentProps<"kbd">) {
+function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       data-slot="kbd"
@@ -11,22 +10,29 @@ function Kbd({ className, ...props }: ComponentProps<"kbd">) {
       )}
       {...props}
     />
-  );
+  )
 }
 
-function KbdGroup({ className, ...props }: ComponentProps<"div">) {
-  return <div data-slot="kbd-group" className={cn("inline-flex items-center gap-1", className)} {...props} />;
+function KbdGroup({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <kbd
+      data-slot="kbd-group"
+      className={cn("inline-flex items-center gap-1", className)}
+      {...props}
+    />
+  )
 }
 
-function KbdSeparator({ className, ...props }: ComponentProps<"span">) {
+function KbdSeparator({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="kbd-separator"
-      aria-hidden="true"
-      className={cn("text-xs font-medium text-muted-foreground/80 select-none", className)}
+      className={cn("text-muted-foreground", className)}
       {...props}
-    />
-  );
+    >
+      +
+    </span>
+  )
 }
 
-export { Kbd, KbdGroup, KbdSeparator };
+export { Kbd, KbdGroup, KbdSeparator }

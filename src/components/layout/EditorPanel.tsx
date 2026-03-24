@@ -11,7 +11,6 @@ import {
   GitBranch,
   LoaderCircle,
   RefreshCcw,
-  Search,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -288,7 +287,7 @@ export function EditorPanel() {
     if (rightTab === "changes" && sidebarOverlayVisible) {
       void loadScmStatus();
     }
-  }, [rightTab, sidebarOverlayVisible]);
+  }, [rightTab, sidebarOverlayVisible, workspaceCwd]);
 
   async function handleStageAll() {
     const stageAll = window.api?.sourceControl?.stageAll;
@@ -543,14 +542,6 @@ export function EditorPanel() {
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Changes</TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button variant="ghost" size="sm" className="h-7 w-7 rounded-sm p-0 text-muted-foreground">
-                    <Search className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Search</TooltipContent>
-              </Tooltip>
             </div>
             <div className="flex items-center gap-1.5">
               <Tooltip>
@@ -600,9 +591,14 @@ export function EditorPanel() {
               value={commitMessage}
               onChange={(event) => setCommitMessage(event.target.value)}
             />
-            <Button size="sm" className="mt-2 h-8 w-full rounded-sm text-sm" disabled={isScmBusy} onClick={() => void handleStageAll()}>
-              + Stage All
-            </Button>
+            <div className="mt-2 flex items-center gap-2">
+              <Button size="sm" className="h-8 flex-1 rounded-sm text-sm" disabled={isScmBusy} onClick={() => void handleCommit()}>
+                Commit
+              </Button>
+              <Button size="sm" variant="outline" className="h-8 rounded-sm text-sm" disabled={isScmBusy} onClick={() => void handleStageAll()}>
+                + Stage All
+              </Button>
+            </div>
           </div>
         ) : null}
 
@@ -728,11 +724,6 @@ export function EditorPanel() {
 
         {rightTab === "changes" ? (
           <div className="border-t border-border/80 p-2">
-            <div className="mb-2 flex items-center gap-2">
-              <Button size="sm" className="h-8 rounded-sm px-2 text-sm" disabled={isScmBusy} onClick={() => void handleCommit()}>
-                Commit
-              </Button>
-            </div>
             <p className="text-sm text-muted-foreground">Commit History ({sourceHistory.length})</p>
             <div className="mt-1 max-h-24 space-y-1 overflow-auto">
               {sourceHistory.length === 0 ? <p className="text-sm text-muted-foreground">Initial commit</p> : null}

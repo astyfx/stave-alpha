@@ -8,6 +8,7 @@ Stave is an Electron-based AI coding workspace built with Bun, React, Vite, and 
 - task-oriented chat with approvals, user-input, tools, diffs, and plans
 - Session Replay drawer for recent-turn inspection and request snapshots
 - `$skill-name` composer selector that resolves installed Claude and Codex skills across global, user, and workspace scopes
+- file and image attachments in the composer, including screenshot capture and clipboard image paste with inline preview
 - Monaco editor with workspace-backed TypeScript IntelliSense, optional Python LSP support, docked terminal, and source-control actions
 - redesigned project, workspace, and task shell with a collapsible project sidebar, workspace task tabs, and a right-side activity rail
 - recent-project switching that preserves each project's own workspace list and last active workspace
@@ -107,6 +108,7 @@ Stable project documentation now lives under `docs/`.
 - [Shared skill management plan (2026-03-13)](docs/future/shared-skill-management-plan-2026-03-13.md)
 - [Session Replay](docs/features/session-replay.md)
 - [Skill selector](docs/features/skill-selector.md)
+- [Attachments](docs/features/attachments.md)
 - [Language intelligence](docs/features/language-intelligence.md)
 - [Developer diagnostics](docs/developer/diagnostics.md)
 - [shadcn preset](docs/ui/shadcn-preset.md)

@@ -1,45 +1,47 @@
-import { CircleCheckIcon, InfoIcon, Loader2Icon, OctagonXIcon, TriangleAlertIcon } from "lucide-react";
-import { Toaster as Sonner, toast, type ToasterProps } from "sonner";
-
-import { useAppStore } from "@/store/app.store";
+import { useTheme } from "next-themes"
+import { toast, Toaster as Sonner, type ToasterProps } from "sonner"
+import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const isDarkMode = useAppStore((state) => state.isDarkMode);
+  const { theme = "system" } = useTheme()
+
   return (
     <Sonner
-      expand
-      position="top-right"
-      theme={isDarkMode ? "dark" : "light"}
+      theme={theme as ToasterProps["theme"]}
       className="toaster group"
       icons={{
-        success: <CircleCheckIcon className="size-4" />,
-        info: <InfoIcon className="size-4" />,
-        warning: <TriangleAlertIcon className="size-4" />,
-        error: <OctagonXIcon className="size-4" />,
-        loading: <Loader2Icon className="size-4 animate-spin" />,
+        success: (
+          <CircleCheckIcon className="size-4" />
+        ),
+        info: (
+          <InfoIcon className="size-4" />
+        ),
+        warning: (
+          <TriangleAlertIcon className="size-4" />
+        ),
+        error: (
+          <OctagonXIcon className="size-4" />
+        ),
+        loading: (
+          <Loader2Icon className="size-4 animate-spin" />
+        ),
       }}
-      offset={{ top: 64, right: 16 }}
       style={
         {
-          "--normal-bg": "var(--foreground)",
-          "--normal-text": "var(--background)",
-          "--normal-border": "color-mix(in oklch, var(--background) 12%, transparent)",
-          "--border-radius": "calc(var(--radius) + 2px)",
+          "--normal-bg": "var(--popover)",
+          "--normal-text": "var(--popover-foreground)",
+          "--normal-border": "var(--border)",
+          "--border-radius": "var(--radius)",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
-          toast: "border border-background/12 bg-foreground text-background shadow-lg dark:border-foreground/12",
-          title: "text-sm font-medium",
-          description: "text-sm !text-background",
-          success: "border-emerald-500/25",
-          error: "border-destructive/30",
-          icon: "text-background/85",
+          toast: "cn-toast",
         },
       }}
       {...props}
     />
-  );
-};
+  )
+}
 
-export { toast, Toaster };
+export { toast, Toaster }

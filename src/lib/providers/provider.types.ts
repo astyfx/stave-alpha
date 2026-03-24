@@ -103,6 +103,7 @@ export interface ProviderTurnRequest {
     claudeEffort?: "low" | "medium" | "high" | "max";
     claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
     claudeAgentProgressSummaries?: boolean;
+    claudeFastMode?: boolean;
     claudeAllowedTools?: string[];
     claudeDisallowedTools?: string[];
     claudeResumeSessionId?: string;
@@ -116,6 +117,7 @@ export interface ProviderTurnRequest {
     codexShowRawAgentReasoning?: boolean;
     codexReasoningSummary?: "auto" | "concise" | "detailed" | "none";
     codexSupportsReasoningSummaries?: "auto" | "enabled" | "disabled";
+    codexFastMode?: boolean;
     codexResumeThreadId?: string;
   };
 }

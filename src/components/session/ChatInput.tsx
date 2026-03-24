@@ -202,6 +202,9 @@ export function ChatInput(args: ChatInputProps = {}) {
     codexReasoningSummary,
     codexSupportsReasoningSummaries,
     codexPathOverride,
+    claudeFastMode,
+    codexFastMode,
+    fastModeVisible,
   ] = useAppStore(useShallow((state) => [
     state.settings.modelClaude,
     state.settings.modelCodex,
@@ -226,6 +229,9 @@ export function ChatInput(args: ChatInputProps = {}) {
     state.settings.codexReasoningSummary,
     state.settings.codexSupportsReasoningSummaries,
     state.settings.codexPathOverride,
+    state.settings.claudeFastMode,
+    state.settings.codexFastMode,
+    state.settings.fastModeVisible,
   ] as const));
   const providerSelectionTarget = activeTaskId || "draft:session";
   const skillCatalog = useAppStore((state) => state.skillCatalog);
@@ -374,6 +380,12 @@ export function ChatInput(args: ChatInputProps = {}) {
           label: "Progress Summaries",
           value: claudeAgentProgressSummaries ? "On" : "Off",
         },
+        {
+          id: "fast-mode",
+          label: "Fast Mode",
+          value: claudeFastMode ? "On" : "Off",
+          tone: claudeFastMode ? "warning" as const : "default" as const,
+        },
       ];
     }
 
@@ -414,6 +426,12 @@ export function ChatInput(args: ChatInputProps = {}) {
         label: "Summary Support",
         value: findOptionLabel(CODEX_REASONING_SUPPORT_OPTIONS, codexSupportsReasoningSummaries),
       },
+      {
+        id: "fast-mode",
+        label: "Fast Mode",
+        value: codexFastMode ? "On" : "Off",
+        tone: codexFastMode ? "warning" as const : "default" as const,
+      },
       ...(codexPathOverride.trim()
         ? [{
             id: "codex-binary",
@@ -427,7 +445,9 @@ export function ChatInput(args: ChatInputProps = {}) {
     claudeAllowDangerouslySkipPermissions,
     claudeAgentProgressSummaries,
     claudeAllowUnsandboxedCommands,
+    claudeFastMode,
     claudeSandboxEnabled,
+    codexFastMode,
     codexNetworkAccessEnabled,
     codexPathOverride,
     codexReasoningSummary,
@@ -708,6 +728,14 @@ export function ChatInput(args: ChatInputProps = {}) {
               },
             });
           }}
+          fastMode={activeProvider === "claude-code" ? claudeFastMode : codexFastMode}
+          onFastModeChange={fastModeVisible ? (enabled) => {
+            if (activeProvider === "claude-code") {
+              updateSettings({ patch: { claudeFastMode: enabled } });
+            } else {
+              updateSettings({ patch: { codexFastMode: enabled } });
+            }
+          } : undefined}
           permissionMode={permissionMode}
           runtimeQuickControls={runtimeQuickControls}
           runtimeStatusItems={runtimeStatusItems}

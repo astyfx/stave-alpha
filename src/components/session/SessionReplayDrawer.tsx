@@ -94,7 +94,7 @@ function SessionReplayDrawerBody({
               <Badge variant="secondary">{headerMeta.previewEventCount} events</Badge>
             ) : null}
             {headerMeta?.isLatest ? <Badge variant="outline">Latest</Badge> : null}
-            {headerMeta?.isLive ? <Badge variant="warning">Live</Badge> : null}
+            {headerMeta?.isLive ? <Badge variant="secondary">Live</Badge> : null}
           </div>
           <div className="space-y-1">
             <DrawerTitle className="text-lg font-semibold">

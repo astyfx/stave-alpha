@@ -105,7 +105,7 @@ export function Conversation(props: HTMLAttributes<HTMLDivElement>) {
 
   return (
     <ConversationContext.Provider value={contextValue}>
-      <section className={cn("relative flex min-h-0 flex-1 bg-background", props.className)} {...props} />
+      <section className={cn("relative flex min-h-0 flex-1", props.className)} {...props} />
     </ConversationContext.Provider>
   );
 }
@@ -175,6 +175,9 @@ export function ConversationContent(props: ConversationContentProps) {
     if (!shouldForceScroll) {
       return;
     }
+    // Re-enable auto-scroll so subsequent content updates (streaming) keep
+    // following the bottom after this forced scroll.
+    stickToBottomRef.current = true;
     const behavior = autoScrollBehavior ?? "auto";
     // Single RAF is sufficient — the double/triple RAF pattern caused jitter
     // by issuing multiple scroll commands across successive frames.
@@ -381,7 +384,14 @@ export function ConversationVirtualList<T>(props: ConversationVirtualListProps<T
       scope: props.listKey,
     };
 
-    if (shouldForceRestoreBottom || (!listScopeChanged && stickToBottomRef.current)) {
+    if (shouldForceRestoreBottom) {
+      // Re-enable stickToBottom so Virtuoso's followOutput keeps pinning new
+      // content after this forced restore (e.g. during streaming).
+      stickToBottomRef.current = true;
+      restoreToBottom();
+      return;
+    }
+    if (!listScopeChanged && stickToBottomRef.current) {
       restoreToBottom();
       return;
     }

@@ -16,10 +16,11 @@ export const TopBarWorkspaceSwitcher = memo(function TopBarWorkspaceSwitcher({
   onRequestDeleteWorkspace,
 }: TopBarWorkspaceSwitcherProps) {
   const [switchingWorkspaceId, setSwitchingWorkspaceId] = useState<string | null>(null);
-  const [workspaces, activeWorkspaceId, workspaceDefaultById, switchWorkspace] = useAppStore(useShallow((state) => [
+  const [workspaces, activeWorkspaceId, workspaceDefaultById, workspaceBranchById, switchWorkspace] = useAppStore(useShallow((state) => [
     state.workspaces,
     state.activeWorkspaceId,
     state.workspaceDefaultById,
+    state.workspaceBranchById,
     state.switchWorkspace,
   ] as const));
 
@@ -37,8 +38,9 @@ export const TopBarWorkspaceSwitcher = memo(function TopBarWorkspaceSwitcher({
         id: workspace.id,
         name: workspace.name,
         isDefault: Boolean(workspaceDefaultById[workspace.id]),
+        branch: workspaceBranchById[workspace.id],
       }));
-  }, [workspaces, workspaceDefaultById]);
+  }, [workspaces, workspaceBranchById, workspaceDefaultById]);
 
   const handleWorkspaceSwitch = useCallback((workspaceId: string) => {
     if (workspaceId === activeWorkspaceId || switchingWorkspaceId) {
@@ -59,6 +61,7 @@ export const TopBarWorkspaceSwitcher = memo(function TopBarWorkspaceSwitcher({
             key={workspace.id}
             workspaceId={workspace.id}
             workspaceName={workspace.name}
+            branch={workspace.branch}
             isActive={workspace.id === activeWorkspaceId}
             isDefault={workspace.isDefault}
             isSwitching={switchingWorkspaceId === workspace.id}

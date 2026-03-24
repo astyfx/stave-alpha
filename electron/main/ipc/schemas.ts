@@ -27,6 +27,7 @@ const RuntimeOptionsSchema = z.object({
   claudeEffort: z.union([z.literal("low"), z.literal("medium"), z.literal("high"), z.literal("max")]).optional(),
   claudeThinkingMode: z.union([z.literal("adaptive"), z.literal("enabled"), z.literal("disabled")]).optional(),
   claudeAgentProgressSummaries: z.boolean().optional(),
+  claudeFastMode: z.boolean().optional(),
   claudeAllowedTools: z.array(z.string().max(200)).max(200).optional(),
   claudeDisallowedTools: z.array(z.string().max(200)).max(200).optional(),
   claudeResumeSessionId: z.string().max(200).optional(),
@@ -45,6 +46,7 @@ const RuntimeOptionsSchema = z.object({
   codexShowRawAgentReasoning: z.boolean().optional(),
   codexReasoningSummary: z.union([z.literal("auto"), z.literal("concise"), z.literal("detailed"), z.literal("none")]).optional(),
   codexSupportsReasoningSummaries: z.union([z.literal("auto"), z.literal("enabled"), z.literal("disabled")]).optional(),
+  codexFastMode: z.boolean().optional(),
   codexResumeThreadId: z.string().max(200).optional(),
 }).strict().optional();
 

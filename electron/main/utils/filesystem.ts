@@ -10,6 +10,13 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   "build",
   ".next",
   ".nuxt",
+  // macOS system directories
+  ".Trash",
+  ".Trashes",
+  "Library",
+  // Linux system directories
+  ".local",
+  ".cache",
 ]);
 
 function normalizePathInput(value: string | null | undefined) {
@@ -62,7 +69,13 @@ export async function listFilesRecursive(args: { rootPath?: string | null; maxDe
     if (depth > maxDepth || files.length >= maxFiles) {
       return;
     }
-    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    let entries: Awaited<ReturnType<typeof fs.readdir>>;
+    try {
+      entries = await fs.readdir(currentPath, { withFileTypes: true });
+    } catch {
+      // Skip directories that cannot be read (EPERM, EACCES, etc.)
+      return;
+    }
     for (const entry of entries) {
       if (files.length >= maxFiles) {
         break;
@@ -102,7 +115,16 @@ export async function listDirectoryEntries(args: { rootPath?: string | null; dir
   }
 
   const relativeDirectoryPath = toSafeRelativePath(args.directoryPath);
-  const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+  let entries: Awaited<ReturnType<typeof fs.readdir>>;
+  try {
+    entries = await fs.readdir(absolutePath, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES") {
+      return [];
+    }
+    throw error;
+  }
   return entries
     .flatMap((entry) => {
       if (entry.isDirectory()) {
