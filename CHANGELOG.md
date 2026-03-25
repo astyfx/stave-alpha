@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.17](https://github.com/astyfx/stave/compare/v0.0.16...v0.0.17) (2026-03-25)
+
+### Highlights
+
+- fixed a release-blocking provider turn type mismatch by centralizing shared `ProviderRuntimeOptions` across renderer, preload, Electron runtime, and the dev bridge
+- added strict IPC schema support for `staveRouteModels`, so Stave router model overrides are accepted end-to-end instead of failing type or runtime validation
+- reduced duplicated provider runtime contract declarations, lowering the chance that future Claude, Codex, or Stave option additions drift across the app boundary
+
 ## [0.0.15](https://github.com/astyfx/stave/compare/v0.0.14...v0.0.15) (2026-03-24)
 
 ### Highlights

@@ -24,6 +24,15 @@ export interface CanonicalRetrievedContextPart {
   content: string;
 }
 
+export interface StaveRouteModels {
+  planning?: string;
+  ecosystem?: string;
+  complex?: string;
+  codeGen?: string;
+  quickEdit?: string;
+  default?: string;
+}
+
 export interface CanonicalSkillContextPart {
   type: "skill_context";
   skills: SkillPromptContext[];
@@ -89,7 +98,10 @@ export interface ProviderTurnRequest {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
+  runtimeOptions?: ProviderRuntimeOptions;
+}
+
+export interface ProviderRuntimeOptions {
     model?: string;
     chatStreamingEnabled?: boolean;
     debug?: boolean;
@@ -120,7 +132,8 @@ export interface ProviderTurnRequest {
     codexSupportsReasoningSummaries?: "auto" | "enabled" | "disabled";
     codexFastMode?: boolean;
     codexResumeThreadId?: string;
-  };
+    /** Per-rule model overrides for the Stave meta-provider router. */
+    staveRouteModels?: StaveRouteModels;
 }
 
 export interface ProviderAdapter {

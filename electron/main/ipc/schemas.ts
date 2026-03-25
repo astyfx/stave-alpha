@@ -48,6 +48,14 @@ const RuntimeOptionsSchema = z.object({
   codexSupportsReasoningSummaries: z.union([z.literal("auto"), z.literal("enabled"), z.literal("disabled")]).optional(),
   codexFastMode: z.boolean().optional(),
   codexResumeThreadId: z.string().max(200).optional(),
+  staveRouteModels: z.object({
+    planning: z.string().max(200).optional(),
+    ecosystem: z.string().max(200).optional(),
+    complex: z.string().max(200).optional(),
+    codeGen: z.string().max(200).optional(),
+    quickEdit: z.string().max(200).optional(),
+    default: z.string().max(200).optional(),
+  }).strict().optional(),
 }).strict().optional();
 
 const UserInputOptionSchema = z.object({

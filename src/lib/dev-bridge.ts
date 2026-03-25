@@ -1,4 +1,4 @@
-import type { CanonicalConversationRequest, ProviderId } from "@/lib/providers/provider.types";
+import type { CanonicalConversationRequest, ProviderId, ProviderRuntimeOptions } from "@/lib/providers/provider.types";
 
 const DEV_API_BASE = "http://127.0.0.1:3001";
 
@@ -49,7 +49,7 @@ export function installDevApiBridge() {
         taskId?: string;
         workspaceId?: string;
         cwd?: string;
-        runtimeOptions?: Record<string, unknown>;
+        runtimeOptions?: ProviderRuntimeOptions;
       }) => {
         const result = await postJson<{ events: unknown[] }>({
           path: "/api/provider/turn",

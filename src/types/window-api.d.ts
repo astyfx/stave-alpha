@@ -1,4 +1,4 @@
-import type { CanonicalConversationRequest, ProviderId } from "@/lib/providers/provider.types";
+import type { CanonicalConversationRequest, ProviderId, ProviderRuntimeOptions } from "@/lib/providers/provider.types";
 import type { ProviderSlashCommand } from "@/lib/providers/provider-command-catalog";
 import type { SkillCatalogResponse } from "@/lib/skills/types";
 
@@ -10,47 +10,7 @@ interface ProviderStreamTurnArgs {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
-    model?: string;
-    chatStreamingEnabled?: boolean;
-    debug?: boolean;
-    providerTimeoutMs?: number;
-    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
-    claudeAllowDangerouslySkipPermissions?: boolean;
-    claudeSandboxEnabled?: boolean;
-    claudeAllowUnsandboxedCommands?: boolean;
-    claudeSystemPrompt?: string;
-    claudeMaxTurns?: number;
-    claudeMaxBudgetUsd?: number;
-    claudeEffort?: "low" | "medium" | "high" | "max";
-    claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
-    claudeAgentProgressSummaries?: boolean;
-    claudeFastMode?: boolean;
-    claudeAllowedTools?: string[];
-    claudeDisallowedTools?: string[];
-    claudeResumeSessionId?: string;
-    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-    codexSkipGitRepoCheck?: boolean;
-    codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-    codexPathOverride?: string;
-    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-    codexWebSearchMode?: "disabled" | "cached" | "live";
-    codexShowRawAgentReasoning?: boolean;
-    codexReasoningSummary?: "auto" | "concise" | "detailed" | "none";
-    codexSupportsReasoningSummaries?: "auto" | "enabled" | "disabled";
-    codexFastMode?: boolean;
-    codexResumeThreadId?: string;
-    /** Per-rule model overrides for the Stave meta-provider router. */
-    staveRouteModels?: {
-      planning?: string;
-      ecosystem?: string;
-      complex?: string;
-      codeGen?: string;
-      quickEdit?: string;
-      default?: string;
-    };
-  };
+  runtimeOptions?: ProviderRuntimeOptions;
 }
 
 type ProviderStreamTurnResult =

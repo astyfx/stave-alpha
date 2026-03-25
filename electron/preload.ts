@@ -1,8 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { CanonicalConversationRequest } from "../src/lib/providers/provider.types";
+import type { CanonicalConversationRequest, ProviderId, ProviderRuntimeOptions } from "../src/lib/providers/provider.types";
 import type { SkillCatalogResponse } from "../src/lib/skills/types";
-
-type ProviderId = "claude-code" | "codex";
 
 interface ProviderSlashCommand {
   name: string;
@@ -19,38 +17,7 @@ interface StreamTurnArgs {
   taskId?: string;
   workspaceId?: string;
   cwd?: string;
-  runtimeOptions?: {
-    model?: string;
-    chatStreamingEnabled?: boolean;
-    debug?: boolean;
-    providerTimeoutMs?: number;
-    claudePermissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk";
-    claudeAllowDangerouslySkipPermissions?: boolean;
-    claudeSandboxEnabled?: boolean;
-    claudeAllowUnsandboxedCommands?: boolean;
-    claudeSystemPrompt?: string;
-    claudeMaxTurns?: number;
-    claudeMaxBudgetUsd?: number;
-    claudeEffort?: "low" | "medium" | "high" | "max";
-    claudeThinkingMode?: "adaptive" | "enabled" | "disabled";
-    claudeAgentProgressSummaries?: boolean;
-    claudeFastMode?: boolean;
-    claudeAllowedTools?: string[];
-    claudeDisallowedTools?: string[];
-    claudeResumeSessionId?: string;
-    codexSandboxMode?: "read-only" | "workspace-write" | "danger-full-access";
-    codexSkipGitRepoCheck?: boolean;
-    codexNetworkAccessEnabled?: boolean;
-    codexApprovalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-    codexPathOverride?: string;
-    codexModelReasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-    codexWebSearchMode?: "disabled" | "cached" | "live";
-    codexShowRawAgentReasoning?: boolean;
-    codexReasoningSummary?: "auto" | "concise" | "detailed" | "none";
-    codexSupportsReasoningSummaries?: "auto" | "enabled" | "disabled";
-    codexFastMode?: boolean;
-    codexResumeThreadId?: string;
-  };
+  runtimeOptions?: ProviderRuntimeOptions;
 }
 
 interface TerminalRunArgs {
